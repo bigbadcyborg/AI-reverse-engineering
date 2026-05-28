@@ -1,37 +1,295 @@
 # Reverse Engineering Analysis Report
 
-**Generated:** {{ timestamp }}
-**Functions analyzed:** {{ results | length }}
+| | |
+|---|---|
+| **Generated** | {{ timestamp }} |
+| **Source** | `{{ source }}` |
+| **Functions analyzed** | {{ total_count }} |
 
 ---
 
-{% for r in results %}
-## `{{ r.function_name }}` — `{{ r.entry_point }}`
+## Table of Contents
 
-| Field | Value |
-|-------|-------|
-| **Suggested name** | `{{ r.suggested_name or "—" }}` |
-| **Category** | {{ r.category or "—" }} |
-| **Confidence** | {{ r.confidence }} |
+1. [Overview](#1-overview)
+2. [High-Priority Functions](#2-high-priority-functions)
+3. [File I/O Functions](#3-file-io-functions)
+4. [Network Functions](#4-network-functions)
+5. [Crypto / Obfuscation Functions](#5-crypto--obfuscation-functions)
+6. [Rename Suggestions](#6-rename-suggestions)
+7. [Low-Confidence Findings](#7-low-confidence-findings)
+8. [Manual Review Queue](#8-manual-review-queue)
+
+---
+
+## 1. Overview
 
 ### Summary
+
+| Metric | Count |
+|--------|------:|
+| Total functions analyzed | {{ total_count }} |
+| High-priority (crypto / network / process / registry) | {{ high_priority_count }} |
+| Functions with uncertainties | {{ review_queue_count }} |
+| Low-confidence findings | {{ low_confidence_count }} |
+| Rename suggestions generated | {{ rename_count }} |
+
+### Category Breakdown
+
+| Category | Count |
+|----------|------:|
+{% for cat, count in category_counts %}
+| {{ cat }} | {{ count }} |
+{% endfor %}
+
+### Confidence Distribution
+
+| Confidence | Count |
+|------------|------:|
+{% for level in ["high", "medium", "low"] %}
+{% if confidence_counts.get(level) %}
+| {{ level }} | {{ confidence_counts[level] }} |
+{% endif %}
+{% endfor %}
+
+---
+
+## 2. High-Priority Functions
+
+> Functions in security-sensitive categories: **crypto**, **network**, **process**, **registry**.
+> These should be reviewed before lower-priority findings.
+
+{% if high_priority %}
+### Quick Reference
+
+| Entry Point | Original Name | Suggested Name | Category | Confidence |
+|-------------|---------------|----------------|----------|------------|
+{% for r in high_priority %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name or "—" }}` | {{ r.category }} | {{ r.confidence }} |
+{% endfor %}
+
+### Details
+
+{% for r in high_priority %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}`
+**Category:** {{ r.category }} | **Confidence:** {{ r.confidence }}
 
 {{ r.summary or "_No summary generated._" }}
 
 {% if r.side_effects %}
-### Side Effects
-
-{% for se in r.side_effects %}- {{ se }}
+**Side effects:**
+{% for se in r.side_effects %}
+- {{ se }}
 {% endfor %}
 {% endif %}
 {% if r.uncertainties %}
-### Uncertainties / Needs Review
-
-{% for u in r.uncertainties %}- {{ u }}
+**Uncertainties:**
+{% for u in r.uncertainties %}
+- {{ u }}
 {% endfor %}
 {% endif %}
 
+{% endfor %}
+{% else %}
+_No high-priority functions identified in this analysis._
+{% endif %}
+
 ---
+
+## 3. File I/O Functions
+
+> Functions that interact with the filesystem.
+
+{% if file_io_functions %}
+| Entry Point | Original Name | Suggested Name | Confidence |
+|-------------|---------------|----------------|------------|
+{% for r in file_io_functions %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name or "—" }}` | {{ r.confidence }} |
 {% endfor %}
 
-_All analysis is produced by a local LLM and should be treated as hypotheses, not ground truth. Validate all suggestions before applying changes._
+### Details
+
+{% for r in file_io_functions %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}` | **Confidence:** {{ r.confidence }}
+
+{{ r.summary or "_No summary generated._" }}
+
+{% if r.side_effects %}
+**Side effects:** {{ r.side_effects | join("; ") }}
+{% endif %}
+{% if r.uncertainties %}
+**Uncertainties:**
+{% for u in r.uncertainties %}
+- {{ u }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% else %}
+_No file I/O functions identified._
+{% endif %}
+
+---
+
+## 4. Network Functions
+
+> Functions that perform network communication.
+
+{% if network_functions %}
+| Entry Point | Original Name | Suggested Name | Confidence |
+|-------------|---------------|----------------|------------|
+{% for r in network_functions %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name or "—" }}` | {{ r.confidence }} |
+{% endfor %}
+
+### Details
+
+{% for r in network_functions %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}` | **Confidence:** {{ r.confidence }}
+
+{{ r.summary or "_No summary generated._" }}
+
+{% if r.side_effects %}
+**Side effects:** {{ r.side_effects | join("; ") }}
+{% endif %}
+{% if r.uncertainties %}
+**Uncertainties:**
+{% for u in r.uncertainties %}
+- {{ u }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% else %}
+_No network functions identified._
+{% endif %}
+
+---
+
+## 5. Crypto / Obfuscation Functions
+
+> Functions involving encryption, hashing, XOR obfuscation, or key scheduling.
+> Treat these with heightened scrutiny — they may indicate packing, C2 encoding, or credential handling.
+
+{% if crypto_functions %}
+| Entry Point | Original Name | Suggested Name | Confidence |
+|-------------|---------------|----------------|------------|
+{% for r in crypto_functions %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name or "—" }}` | {{ r.confidence }} |
+{% endfor %}
+
+### Details
+
+{% for r in crypto_functions %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}` | **Confidence:** {{ r.confidence }}
+
+{{ r.summary or "_No summary generated._" }}
+
+{% if r.side_effects %}
+**Side effects:** {{ r.side_effects | join("; ") }}
+{% endif %}
+{% if r.uncertainties %}
+**Uncertainties:**
+{% for u in r.uncertainties %}
+- {{ u }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% else %}
+_No crypto or obfuscation functions identified._
+{% endif %}
+
+---
+
+## 6. Rename Suggestions
+
+> All functions where the LLM suggested a name different from the original.
+> Apply these renames in your disassembler only after validating the summary.
+
+{% if rename_suggestions %}
+| Entry Point | Original Name | Suggested Name | Category |
+|-------------|---------------|----------------|----------|
+{% for r in rename_suggestions %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name }}` | {{ r.category }} |
+{% endfor %}
+{% else %}
+_No rename suggestions generated._
+{% endif %}
+
+---
+
+## 7. Low-Confidence Findings
+
+> The LLM reported low confidence in these analyses.
+> The decompiled code may be complex, obfuscated, or the function too short to characterize reliably.
+> **Do not apply rename suggestions from this section without manual review.**
+
+{% if low_confidence %}
+{% for r in low_confidence %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}` | **Category:** {{ r.category }}
+
+{{ r.summary or "_No summary generated._" }}
+
+{% if r.uncertainties %}
+**Uncertainties:**
+{% for u in r.uncertainties %}
+- {{ u }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% else %}
+_No low-confidence findings. All results were medium or high confidence._
+{% endif %}
+
+---
+
+## 8. Manual Review Queue
+
+> Functions that the LLM flagged with specific uncertainties requiring human judgment.
+> Prioritize these during manual analysis.
+
+{% if review_queue %}
+| Entry Point | Name | Suggested Name | Uncertainties |
+|-------------|------|----------------|---------------|
+{% for r in review_queue %}
+| `{{ r.entry_point }}` | `{{ r.function_name }}` | `{{ r.suggested_name or "—" }}` | {{ r.uncertainties | join("; ") }} |
+{% endfor %}
+
+### Detail Blocks
+
+{% for r in review_queue %}
+#### `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+**Suggested name:** `{{ r.suggested_name or "—" }}` | **Category:** {{ r.category }} | **Confidence:** {{ r.confidence }}
+
+{{ r.summary or "_No summary generated._" }}
+
+**Items requiring review:**
+{% for u in r.uncertainties %}
+- [ ] {{ u }}
+{% endfor %}
+
+{% if r.side_effects %}
+**Side effects:** {{ r.side_effects | join("; ") }}
+{% endif %}
+
+{% endfor %}
+{% else %}
+_No functions were flagged with uncertainties. The LLM was confident in all analyses._
+{% endif %}
+
+---
+
+_All analysis is produced by a local LLM and must be treated as hypotheses, not ground truth._
+_Validate all rename suggestions and summaries before applying changes to your project._

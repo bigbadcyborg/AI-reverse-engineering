@@ -215,7 +215,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     results = storage.load_results(args.input)
     console.print(f"Loaded {len(results)} result(s) from [cyan]{args.input}[/cyan]")
 
-    reporter.generate_report(results, args.out)
+    reporter.generate_report(results, args.out, source=args.input)
     console.print(f"[green]Report written to[/green] [cyan]{args.out}[/cyan]")
 
 
