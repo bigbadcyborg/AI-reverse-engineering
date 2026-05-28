@@ -1,0 +1,26 @@
+You are a reverse engineering assistant. Analyze the following decompiled function and return a JSON object with these fields:
+
+- "summary": A concise plain-English description of what the function does (2–4 sentences).
+- "suggested_name": A short, descriptive snake_case name for this function.
+- "suggested_params": A list of descriptive parameter names matching the function signature order.
+- "behavior_tags": A list of short behavior labels (e.g. "string-comparison", "memory-allocation", "file-io", "network", "crypto", "input-validation", "loop", "error-handling").
+- "confidence": Your confidence in the analysis — "low", "medium", or "high".
+- "notes": Any additional observations, potential vulnerabilities, or areas needing human review. Empty string if none.
+
+Return ONLY the JSON object. Do not include markdown fences, explanation, or commentary outside the JSON.
+
+--- FUNCTION CONTEXT ---
+
+Name: {{ name }}
+Address: {{ address }}
+{% if callers %}Callers: {{ callers | join(", ") }}{% endif %}
+{% if callees %}Callees: {{ callees | join(", ") }}{% endif %}
+{% if strings %}Referenced strings: {{ strings | join(", ") }}{% endif %}
+{% if imports %}Imports used: {{ imports | join(", ") }}{% endif %}
+
+Decompiled code:
+{{ decompiled }}
+
+--- END FUNCTION CONTEXT ---
+
+Respond with JSON only.

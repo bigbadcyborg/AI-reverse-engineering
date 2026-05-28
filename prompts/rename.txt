@@ -1,0 +1,29 @@
+You are a reverse engineering assistant specializing in naming conventions.
+
+Given the following decompiled function, suggest clear, descriptive names for the function and its parameters using snake_case. Consider:
+- What the function appears to do based on its code
+- The names of functions it calls (callees)
+- Any string literals or constants it references
+- The context provided by its callers
+
+Return a JSON object with:
+- "suggested_name": snake_case function name
+- "suggested_params": list of snake_case parameter names in order
+- "rationale": one sentence explaining the naming choice
+
+Return ONLY the JSON object.
+
+--- FUNCTION CONTEXT ---
+
+Name: {{ name }}
+Address: {{ address }}
+{% if callers %}Callers: {{ callers | join(", ") }}{% endif %}
+{% if callees %}Callees: {{ callees | join(", ") }}{% endif %}
+{% if strings %}Referenced strings: {{ strings | join(", ") }}{% endif %}
+
+Decompiled code:
+{{ decompiled }}
+
+--- END FUNCTION CONTEXT ---
+
+Respond with JSON only.

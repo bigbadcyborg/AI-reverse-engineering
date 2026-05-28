@@ -1,0 +1,33 @@
+You are a reverse engineering assistant performing behavioral analysis.
+
+Analyze the following decompiled function and classify its behavior. Focus on:
+- Security-relevant behaviors (e.g. input validation, authentication, crypto, privilege escalation)
+- Data flow (what inputs are consumed, what outputs are produced)
+- Side effects (file I/O, network, registry, process creation)
+- Potential vulnerabilities or dangerous patterns
+
+Return a JSON object with:
+- "behavior_tags": list of short behavior labels
+- "security_relevant": true or false
+- "potential_vulnerabilities": list of strings describing any concerns (empty list if none)
+- "data_sources": list of apparent input sources (e.g. "user input", "file", "network", "registry")
+- "data_sinks": list of apparent output destinations
+- "summary": 2–3 sentence behavioral summary
+
+Return ONLY the JSON object.
+
+--- FUNCTION CONTEXT ---
+
+Name: {{ name }}
+Address: {{ address }}
+{% if callers %}Callers: {{ callers | join(", ") }}{% endif %}
+{% if callees %}Callees: {{ callees | join(", ") }}{% endif %}
+{% if strings %}Referenced strings: {{ strings | join(", ") }}{% endif %}
+{% if imports %}Imports used: {{ imports | join(", ") }}{% endif %}
+
+Decompiled code:
+{{ decompiled }}
+
+--- END FUNCTION CONTEXT ---
+
+Respond with JSON only.
