@@ -56,6 +56,7 @@ AI-reverse-engineering-platform/
 │   ├── analyzer.py         # Send functions to local LLM, parse responses
 │   ├── reporter.py         # Generate Markdown reports
 │   ├── renamer.py          # Generate and display rename suggestions
+│   ├── approver.py         # Build approved-renames files for Ghidra import
 │   └── storage.py          # Persist analysis results locally
 ├── data/
 │   ├── input/              # Drop exported decompiled function files here
@@ -65,8 +66,10 @@ AI-reverse-engineering-platform/
 │   ├── rename.txt
 │   └── behavior.txt
 ├── reports/                # Generated Markdown reports
-├── ghidra_scripts/         # Ghidra export/import helper scripts (future)
-│   └── ExportFunctions.java
+├── ghidra_scripts/         # Ghidra helper scripts
+│   ├── ExportFunctions.java        # Export decompiled functions to JSONL
+│   ├── ImportApprovedRenames.java  # Apply approved renames/comments to Ghidra
+│   └── run_headless_export.bat     # Wrapper for headless export on Windows
 ├── config.json             # Runtime configuration (model, endpoint, limits)
 ├── requirements.txt
 ├── .gitignore
@@ -141,10 +144,83 @@ python -m src.cli report --input data/output/results.json --out reports/analysis
 python -m src.cli rename --input data/output/results.json
 ```
 
+### Generate focused rename suggestions (with reasoning)
+
+```bash
+# Run the dedicated rename LLM prompt on raw functions
+python -m src.cli suggest-renames --input data/input/functions.jsonl \
+    --output data/output/renames.jsonl
+
+# Or derive suggestions from existing analysis results (no LLM call)
+python -m src.cli suggest-renames --from-analysis data/output/results.jsonl \
+    --output data/output/renames.jsonl
+```
+
+### Create an approved renames file for Ghidra import
+
+```bash
+python -m src.cli approve-renames \
+    --input  data/output/renames.jsonl \
+    --output data/output/approved_renames.json \
+    --min-confidence medium
+```
+
+The output is a **human-editable JSON file**. Review it, then flip any
+`"approved": false` entries to `true` (or vice-versa) before loading it into
+Ghidra. You can also set a custom `"comment"` on each entry — it will be
+written as a plate comment on that function's entry point.
+
+### Import approved renames into Ghidra
+
+1. Open your binary in Ghidra.
+2. Open the **Script Manager** (`Window → Script Manager`).
+3. Add the `ghidra_scripts/` directory to the script paths.
+4. Run **`ImportApprovedRenames`**.
+5. Select your `approved_renames.json` file when prompted.
+
+An `approved_renames_import_log.jsonl` is written alongside the approved file
+with a per-function record of what was renamed, skipped, or errored.
+
+**Headless execution:**
+
+```bat
+analyzeHeadless <project_root> <project_name> ^
+    -process <binary_name> ^
+    -scriptPath ghidra_scripts ^
+    -postScript ImportApprovedRenames.java ^
+        data\output\approved_renames.json ^
+        data\output\import_log.jsonl
+```
+
 ### Check LLM backend connectivity
 
 ```bash
 python -m src.cli ping
+```
+
+---
+
+## Full Workflow (Ghidra → Toolkit → Ghidra)
+
+```
+1. Export functions from Ghidra
+   → ExportFunctions.java  →  data/input/functions.jsonl
+
+2. Analyze with local LLM
+   → python -m src.cli analyze  →  data/output/results.jsonl
+
+3. Generate report
+   → python -m src.cli report   →  reports/analysis.md
+
+4. Generate rename suggestions
+   → python -m src.cli suggest-renames  →  data/output/renames.jsonl
+
+5. Create approved renames file (review + edit)
+   → python -m src.cli approve-renames  →  data/output/approved_renames.json
+
+6. Import approved renames into Ghidra
+   → ImportApprovedRenames.java  →  (functions renamed in Ghidra)
+                                 →  approved_renames_import_log.jsonl
 ```
 
 ---
@@ -190,14 +266,18 @@ Each analyzed function produces a JSON object:
 
 ## Roadmap
 
-| Iteration | Goal |
-|-----------|------|
-| 0 | Project setup, documentation, repo structure |
-| 1 | Core CLI: import → analyze → store → report |
-| 2 | Ghidra export script, rename import script |
-| 3 | Function clustering, call graph analysis |
-| 4 | Local web dashboard, vector search |
-| 5 | Multi-model comparison |
+| Iteration | Goal | Status |
+|-----------|------|--------|
+| 0 | Project setup, documentation, repo structure | Done |
+| 1 | Core CLI: import → analyze → store | Done |
+| 2 | Batch analysis with JSONL streaming and error logging | Done |
+| 3 | Markdown report generation | Done |
+| 4 | Ghidra export script (ExportFunctions.java) | Done |
+| 5 | Rename suggestions with confidence + reasoning | Done |
+| 6 | Approved Ghidra import (ImportApprovedRenames.java) | Done |
+| 7 | Function clustering, call graph analysis | Future |
+| 8 | Local web dashboard, vector search | Future |
+| 9 | Multi-model comparison | Future |
 
 ---
 

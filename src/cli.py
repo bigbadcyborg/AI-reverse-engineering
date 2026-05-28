@@ -5,10 +5,12 @@ Usage:
     python -m src.cli <command> [options]
 
 Commands:
-    analyze   Import functions from JSON/JSONL, run LLM analysis, save results
-    report    Generate a Markdown report from stored analysis results
-    rename    Display rename suggestions from stored analysis results
-    ping      Check connectivity to the configured local LLM backend
+    analyze        Import functions from JSON/JSONL, run LLM analysis, save results
+    report         Generate a Markdown report from stored analysis results
+    rename         Display rename suggestions from stored analysis results
+    suggest-renames Generate focused rename suggestions with confidence and reasoning
+    approve-renames Create an approved renames file from suggestions for Ghidra import
+    ping           Check connectivity to the configured local LLM backend
 """
 
 from __future__ import annotations
@@ -365,6 +367,82 @@ def cmd_suggest_renames(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_approve_renames(args: argparse.Namespace) -> None:
+    """
+    Build an approved renames file from rename suggestions.
+
+    The file is a human-editable JSON array where each entry has an 'approved'
+    boolean field. Entries whose confidence meets --min-confidence are pre-approved;
+    others are included with approved=false for reference.
+
+    After running this command the analyst should:
+      1. Open the output file and review the entries.
+      2. Set approved=true/false for each entry as desired.
+      3. Optionally add a custom 'comment' to be written as a Ghidra plate comment.
+      4. Run ImportApprovedRenames.java inside Ghidra to apply the changes.
+    """
+    from src import approver, storage
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+
+    out_path = Path(args.output)
+
+    # Load rename suggestions (RenameResult JSONL)
+    try:
+        suggestions = storage.load_rename_suggestions(args.input)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Failed to load suggestions:[/red] {exc}")
+        sys.exit(1)
+
+    if not suggestions:
+        console.print("[yellow]No suggestions found in input file.[/yellow]")
+        sys.exit(0)
+
+    console.print(
+        f"Loaded [bold]{len(suggestions)}[/bold] suggestion(s) from "
+        f"[cyan]{args.input}[/cyan]"
+    )
+
+    approved_entries, skipped_entries = approver.create_approved_file(
+        suggestions,
+        out_path,
+        min_confidence=args.min_confidence,
+        add_comment=not args.no_comment,
+        allow_overwrite=args.allow_overwrite,
+    )
+
+    # Summary table
+    from rich.table import Table
+
+    table = Table(title="Approved Renames Summary", show_header=True)
+    table.add_column("Status", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Reason")
+    table.add_row(
+        "[green]Auto-approved[/green]",
+        str(len(approved_entries)),
+        f"confidence >= {args.min_confidence}",
+    )
+    table.add_row(
+        "[yellow]Skipped (approved=false)[/yellow]",
+        str(len(skipped_entries)),
+        "low confidence or no useful name change",
+    )
+    console.print(table)
+
+    console.print(
+        f"\n[green]Approved file written to[/green] [cyan]{out_path}[/cyan]"
+    )
+    console.print(
+        "\nNext steps:\n"
+        "  1. Review and edit the file in any text editor.\n"
+        "  2. Set [bold]approved[/bold] = true/false for each entry.\n"
+        "  3. Optionally add a [bold]comment[/bold] field (plate comment in Ghidra).\n"
+        "  4. Run [bold]ImportApprovedRenames.java[/bold] inside Ghidra."
+    )
+
+
 # ------------------------------------------------------------------
 # Argument parser
 # ------------------------------------------------------------------
@@ -465,6 +543,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path for per-function error records (default: <output>_errors.jsonl)",
     )
     p_suggest.set_defaults(func=cmd_suggest_renames)
+
+    # approve-renames
+    p_approve = sub.add_parser(
+        "approve-renames",
+        help="Create an approved renames file from rename suggestions for Ghidra import",
+    )
+    p_approve.add_argument(
+        "--input", required=True, metavar="PATH",
+        help="Path to rename suggestions JSONL (output of suggest-renames)",
+    )
+    p_approve.add_argument(
+        "--output", required=True, metavar="PATH",
+        help="Path to write the approved renames JSON (human-editable before Ghidra import)",
+    )
+    p_approve.add_argument(
+        "--min-confidence",
+        choices=["low", "medium", "high"],
+        default="medium",
+        metavar="LEVEL",
+        dest="min_confidence",
+        help="Minimum confidence level to auto-approve (default: medium)",
+    )
+    p_approve.add_argument(
+        "--no-comment",
+        action="store_true",
+        help="Do not copy the suggestion reason into the Ghidra comment field",
+    )
+    p_approve.add_argument(
+        "--allow-overwrite",
+        action="store_true",
+        dest="allow_overwrite",
+        help="Allow renaming functions that already have a meaningful (non-auto) name in Ghidra",
+    )
+    p_approve.set_defaults(func=cmd_approve_renames)
 
     return parser
 
