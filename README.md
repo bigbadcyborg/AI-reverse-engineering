@@ -4,6 +4,47 @@ A local-first AI assistant for reverse engineering. It analyzes decompiled code 
 
 ---
 
+## Quick Start
+
+Install dependencies and verify your local LLM:
+
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+python -m src.cli ping
+```
+
+### Fastest path (Dashboard-first)
+
+```bash
+python -m src.cli dashboard
+```
+
+Then open `http://localhost:5000` and drag/drop your Ghidra-exported `.jsonl` file.
+The dashboard will run LLM analysis and ingest results automatically.
+
+### CLI path
+
+```bash
+# 1) Analyze
+python -m src.cli analyze --input data/input/functions.jsonl --output data/output/results.jsonl
+
+# 2) Ingest for search/dashboard (include decompiled code viewer)
+python -m src.cli ingest --input data/output/results.jsonl --source-functions data/input/functions.jsonl
+
+# 3) Dashboard / report / search
+python -m src.cli dashboard
+python -m src.cli report --input data/output/results.jsonl --out reports/analysis.md
+python -m src.cli search --query "crypto"
+```
+
+---
+
 ## Purpose
 
 This tool sits between a decompiler (e.g. Ghidra, Binary Ninja, IDA) and the analyst. It takes exported decompiled function data, sends it to a local LLM, and returns structured summaries, rename suggestions, and behavioral hypotheses.
@@ -110,15 +151,23 @@ Edit `config.json` before running:
   "llm": {
     "backend": "ollama",
     "base_url": "http://localhost:11434",
-    "model": "codellama:13b-instruct"
+    "model": "llama3.2:1b",
+    "timeout_seconds": 120,
+    "temperature": 0.2
   },
   "analysis": {
-    "max_functions_per_run": 50,
-    "context_window_chars": 8000
+    "max_functions_per_run": 0,
+    "context_window_chars": 8000,
+    "batch_size": 5
   },
   "output": {
     "report_dir": "reports/",
-    "data_dir": "data/output/"
+    "data_dir": "data/output/",
+    "db_path": "data/output/analysis.db"
+  },
+  "logging": {
+    "level": "INFO",
+    "log_file": "data/output/run.log"
   }
 }
 ```
@@ -134,19 +183,19 @@ Supported backends: `ollama`, `llamacpp` (OpenAI-compatible endpoint).
 ### Analyze a set of exported functions
 
 ```bash
-python -m src.cli analyze --input data/input/functions.jsonl --output data/output/results.json
+python -m src.cli analyze --input data/input/functions.jsonl --output data/output/results.jsonl
 ```
 
 ### Generate a Markdown report from stored analysis
 
 ```bash
-python -m src.cli report --input data/output/results.json --out reports/analysis.md
+python -m src.cli report --input data/output/results.jsonl --out reports/analysis.md
 ```
 
 ### Show rename suggestions
 
 ```bash
-python -m src.cli rename --input data/output/results.json
+python -m src.cli rename --input data/output/results.jsonl
 ```
 
 ### Generate focused rename suggestions (with reasoning)
@@ -211,6 +260,7 @@ Opens `http://localhost:5000` automatically. Features:
 - **Rename approval buttons** — writes directly to `approved_renames.json`
 - **Approved Renames** page showing pending Ghidra import queue
 - **Export Report** button — generates and downloads a Markdown report
+- **Drag-and-drop JSONL import** — uploads raw function exports, runs LLM analysis in the background, and ingests into SQLite with progress tracking
 
 Options:
 ```bash
@@ -220,10 +270,13 @@ python -m src.cli dashboard --port 8080 --no-browser
 ### Load analysis results into the search database
 
 ```bash
-python -m src.cli ingest --input data/output/results.jsonl
+python -m src.cli ingest \
+    --input data/output/results.jsonl \
+    --source-functions data/input/functions.jsonl
 ```
 
 Re-ingesting the same file upserts (updates) existing rows — safe to run after each analysis pass.
+If `--source-functions` is provided, decompiled code is stored and shown in the dashboard code viewer.
 
 ### Search analyzed functions
 
@@ -281,44 +334,69 @@ python -m src.cli ping
                                  →  approved_renames_import_log.jsonl
 ```
 
+### Dashboard-first workflow (optional)
+
+```
+1. Start dashboard
+   → python -m src.cli dashboard
+
+2. Drag and drop Ghidra JSONL on the page
+   → /api/upload (background LLM analysis + ingest)
+   → data/output/analysis.db updated
+   → Function list auto-refreshes
+
+3. Review functions and approve/reject renames in UI
+   → data/output/approved_renames.json
+
+4. Export report from dashboard
+   → reports/dashboard_export_<timestamp>.md
+```
+
 ---
 
 ## Input Format
 
-The tool accepts JSON or JSONL files. Each function entry should follow this schema:
+The tool accepts JSON or JSONL files. Canonical function input uses this schema:
 
 ```json
 {
-  "name": "FUN_00401a30",
-  "address": "0x00401a30",
-  "decompiled": "void FUN_00401a30(char *param_1) {\n  ...\n}",
-  "callers": ["FUN_00401000"],
+  "functionName": "FUN_00101230",
+  "entryPoint": "0x00101230",
+  "decompiledCode": "int FUN_00101230(char *path) { ... }",
   "callees": ["strcmp", "malloc"],
   "strings": ["error: bad input"],
-  "imports": []
+  "xrefCount": 3
 }
 ```
 
-Fields `callers`, `callees`, `strings`, and `imports` are optional but improve analysis quality.
+Ghidra export compatibility:
+- `calledFunctions` is normalized to `callees`
+- `referencedStrings` is normalized to `strings`
+
+Required fields: `functionName`, `entryPoint`, `decompiledCode`.
 
 ---
 
 ## Output Format
 
-Each analyzed function produces a JSON object:
+Each analyzed function produces a JSON object (JSONL line):
 
 ```json
 {
-  "name": "FUN_00401a30",
-  "address": "0x00401a30",
-  "summary": "Validates a user-supplied string against a known pattern...",
-  "suggested_name": "validate_input_string",
-  "suggested_params": ["input_str"],
-  "behavior_tags": ["input-validation", "string-comparison"],
+  "function_name": "FUN_00101230",
+  "entry_point": "0x00101230",
+  "summary": "Attempts to open a file and returns whether it succeeded.",
+  "suggested_name": "check_file_exists",
+  "category": "file_io",
   "confidence": "medium",
-  "notes": "Uses strcmp; may be vulnerable to timing attacks."
+  "side_effects": ["reads filesystem metadata"],
+  "uncertainties": [],
+  "raw_response": "{...}"
 }
 ```
+
+Dedicated rename suggestions (`suggest-renames`) are written separately as JSONL with:
+`entry_point`, `old_name`, `new_name`, `confidence`, `reason`.
 
 ---
 
