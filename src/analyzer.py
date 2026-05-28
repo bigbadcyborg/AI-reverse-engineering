@@ -15,6 +15,9 @@ Output schema (AnalysisResult):
   side_effects   : list of observable side effects
   uncertainties  : list of things requiring human review
   raw_response   : verbatim LLM output for debugging
+
+rename_function() returns a RenameResult (defined in src.renamer) using the
+dedicated rename.txt prompt. The import is deferred to avoid a circular import.
 """
 
 from __future__ import annotations
@@ -86,6 +89,58 @@ class Analyzer:
             return resp.status_code == 200
         except Exception:
             return False
+
+    def rename_function(self, function: dict[str, Any]) -> "RenameResult":
+        """
+        Run the dedicated rename prompt on a single function.
+
+        Returns a RenameResult with a validated identifier, confidence level,
+        and a one-sentence reason grounded in code evidence.
+
+        The suggested name is validated as a proper identifier and sanitized if
+        necessary (spaces replaced with underscores, etc.). When sanitization
+        changes the name, confidence is capped at "medium" and the original
+        raw suggestion is noted in the reason.
+
+        Raises:
+            TemplateNotFound — if prompts/rename.txt is missing
+            httpx.HTTPError  — on network / HTTP errors
+            RuntimeError     — if the LLM response cannot be parsed as JSON
+        """
+        from src.renamer import (
+            RenameResult,
+            is_valid_identifier,
+            sanitize_identifier,
+        )
+
+        prompt = self._render_prompt("rename.txt", function)
+        raw = self._call_llm(prompt)
+        parsed = self._parse_json(raw)
+
+        new_name = parsed.get("newName", "").strip()
+        confidence = parsed.get("confidence", "low")
+        reason = parsed.get("reason", "").strip()
+
+        if confidence not in VALID_CONFIDENCE:
+            confidence = "low"
+
+        # Validate identifier and sanitize if needed
+        if not is_valid_identifier(new_name):
+            original = new_name
+            new_name = sanitize_identifier(new_name)
+            note = f"[name sanitized from '{original}'] "
+            reason = note + reason
+            # Demote confidence if the name had to be fixed
+            if confidence == "high":
+                confidence = "medium"
+
+        return RenameResult(
+            entry_point=function.get("entryPoint", ""),
+            old_name=function.get("functionName", ""),
+            new_name=new_name,
+            confidence=confidence,
+            reason=reason,
+        )
 
     def analyze_function(self, function: dict[str, Any]) -> AnalysisResult:
         """

@@ -90,6 +90,68 @@ def load_results(path: str | Path) -> list[AnalysisResult]:
 
 
 # ------------------------------------------------------------------
+# Rename suggestions (RenameResult JSONL)
+# ------------------------------------------------------------------
+
+def save_rename_suggestions(suggestions: Sequence, path: str | Path) -> None:
+    """
+    Write RenameResult suggestions to a JSONL file, one per line.
+
+    The file is created (or overwritten) fresh on each call.
+    """
+    from src.renamer import RenameResult  # deferred to avoid circular import
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for s in suggestions:
+            fh.write(json.dumps(dataclasses.asdict(s), ensure_ascii=False) + "\n")
+
+
+def load_rename_suggestions(path: str | Path) -> list:
+    """
+    Load RenameResult suggestions from a JSONL file.
+
+    Returns a list of RenameResult objects.
+    """
+    from src.renamer import RenameResult  # deferred to avoid circular import
+    path = Path(path)
+    results = []
+    with path.open(encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{path}:{lineno}: invalid JSON line — {exc}"
+                ) from exc
+            results.append(RenameResult(**entry))
+    return results
+
+
+def is_rename_suggestions_file(path: str | Path) -> bool:
+    """
+    Return True if the file looks like a RenameResult JSONL rather than
+    an AnalysisResult JSONL (detected by presence of 'old_name' key in
+    the first non-empty line).
+    """
+    path = Path(path)
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                return "old_name" in entry
+    except Exception:
+        pass
+    return False
+
+
+# ------------------------------------------------------------------
 # Error log (JSONL)
 # ------------------------------------------------------------------
 

@@ -220,18 +220,149 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 
 def cmd_rename(args: argparse.Namespace) -> None:
-    """Display rename suggestions from stored analysis results."""
+    """Display rename suggestions from analysis results or a rename suggestions file."""
     from src import renamer, storage
 
     config = _load_config(args.config)
     _setup_logging(config)
 
-    results = storage.load_results(args.input)
-    renamer.display_suggestions(results)
+    # Auto-detect: RenameResult JSONL vs AnalysisResult JSONL
+    if storage.is_rename_suggestions_file(args.input):
+        suggestions = storage.load_rename_suggestions(args.input)
+        console.print(f"Loaded {len(suggestions)} rename suggestion(s) from [cyan]{args.input}[/cyan]")
+        renamer.display_rename_results(suggestions)
+        if args.export:
+            renamer.export_rename_map(suggestions, args.export)
+            console.print(f"[green]Rename map exported to[/green] [cyan]{args.export}[/cyan]")
+    else:
+        results = storage.load_results(args.input)
+        console.print(f"Loaded {len(results)} analysis result(s) from [cyan]{args.input}[/cyan]")
+        renamer.display_suggestions(results)
+        if args.export:
+            renamer.export_rename_map(results, args.export)
+            console.print(f"[green]Rename map exported to[/green] [cyan]{args.export}[/cyan]")
 
-    if args.export:
-        renamer.export_rename_map(results, args.export)
-        console.print(f"[green]Rename map exported to[/green] [cyan]{args.export}[/cyan]")
+
+def cmd_suggest_renames(args: argparse.Namespace) -> None:
+    """
+    Generate focused rename suggestions using the dedicated rename LLM prompt.
+
+    Two input modes:
+      --input PATH          Run the rename prompt on raw function JSON/JSONL.
+      --from-analysis PATH  Derive suggestions from existing analysis results
+                            without making any LLM calls.
+    """
+    from src import importer, renamer, storage
+    from src.analyzer import Analyzer
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+    log = logging.getLogger(__name__)
+
+    out_path = Path(args.output)
+    error_log_path = Path(args.error_log) if args.error_log else _default_error_log(out_path)
+
+    # ---- Mode 1: derive from existing AnalysisResult JSONL (no LLM) --------
+    if args.from_analysis:
+        results = storage.load_results(args.from_analysis)
+        console.print(
+            f"Deriving rename suggestions from [cyan]{args.from_analysis}[/cyan] "
+            f"({len(results)} result(s)) — no LLM call needed."
+        )
+        suggestions = renamer.from_analysis_results(results)
+        storage.save_rename_suggestions(suggestions, out_path)
+        console.print(
+            f"[green]Done.[/green] {len(suggestions)} suggestion(s) saved to "
+            f"[cyan]{out_path}[/cyan]"
+        )
+        renamer.display_rename_results(suggestions)
+        return
+
+    # ---- Mode 2: run rename LLM prompt on raw function JSONL ----------------
+    if not args.input:
+        console.print("[red]Provide either --input or --from-analysis.[/red]")
+        sys.exit(1)
+
+    analyzer = Analyzer(config["llm"])
+
+    console.print("Checking LLM backend connectivity ...")
+    if not analyzer.ping():
+        console.print(
+            "[red]Cannot reach LLM backend.[/red] "
+            "Run [bold]python -m src.cli ping[/bold] for details."
+        )
+        sys.exit(1)
+    console.print("[green]Backend OK.[/green]\n")
+
+    try:
+        functions = list(importer.load(args.input))
+    except (ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]Failed to load input:[/red] {exc}")
+        sys.exit(1)
+
+    max_fn = args.limit if args.limit is not None else config.get("analysis", {}).get("max_functions_per_run", 0)
+    if max_fn and max_fn > 0 and len(functions) > max_fn:
+        console.print(f"[yellow]Limiting to first {max_fn} functions.[/yellow]")
+        functions = functions[:max_fn]
+
+    total = len(functions)
+    console.print(f"Loaded [bold]{total}[/bold] function(s). Output: [cyan]{out_path}[/cyan]\n")
+
+    suggestions: list = []
+    error_count = 0
+
+    progress_cols = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+    ]
+
+    with Progress(*progress_cols, console=console, transient=False) as progress:
+        task = progress.add_task("Generating renames...", total=total)
+
+        for fn in functions:
+            name = fn.get("functionName", fn.get("entryPoint", "unknown"))
+            progress.update(task, description=f"[yellow]{name}[/yellow]")
+
+            try:
+                suggestion = analyzer.rename_function(fn)
+                suggestions.append(suggestion)
+                log.debug("OK: %s -> %s [%s]", name, suggestion.new_name, suggestion.confidence)
+            except Exception as exc:
+                error_count += 1
+                ts = _utc_now()
+                log.error("[%s] Failed: %s: %s", ts, name, exc)
+                log.debug("Traceback:", exc_info=True)
+                storage.append_error_jsonl(error_log_path, fn, exc, ts)
+            finally:
+                progress.advance(task)
+
+        progress.update(task, description="Done")
+
+    storage.save_rename_suggestions(suggestions, out_path)
+
+    console.print()
+    if error_count == 0:
+        console.print(
+            f"[green]Done.[/green] [bold]{len(suggestions)}[/bold] / {total} "
+            "suggestions generated."
+        )
+    else:
+        console.print(
+            f"[yellow]Done with errors.[/yellow] "
+            f"[bold]{len(suggestions)}[/bold] succeeded, "
+            f"[bold red]{error_count}[/bold red] failed. "
+            f"See [cyan]{error_log_path}[/cyan]"
+        )
+
+    console.print(f"Suggestions: [cyan]{out_path}[/cyan]\n")
+    renamer.display_rename_results(suggestions)
+
+    if suggestions == 0:
+        sys.exit(1)
 
 
 # ------------------------------------------------------------------
@@ -295,17 +426,45 @@ def build_parser() -> argparse.ArgumentParser:
 
     # rename
     p_rename = sub.add_parser(
-        "rename", help="Display rename suggestions from analysis results"
+        "rename", help="Display rename suggestions from analysis results or a suggestions file"
     )
     p_rename.add_argument(
         "--input", required=True, metavar="PATH",
-        help="Path to analysis results (.json or .jsonl)",
+        help="Path to analysis results (.json or .jsonl) or rename suggestions (.jsonl)",
     )
     p_rename.add_argument(
         "--export", metavar="PATH", default=None,
         help="Optional: export rename map as JSON to this path",
     )
     p_rename.set_defaults(func=cmd_rename)
+
+    # suggest-renames
+    p_suggest = sub.add_parser(
+        "suggest-renames",
+        help="Generate focused rename suggestions with confidence and reasoning",
+    )
+    suggest_input = p_suggest.add_mutually_exclusive_group(required=True)
+    suggest_input.add_argument(
+        "--input", metavar="PATH",
+        help="Path to function JSON/JSONL — runs dedicated rename LLM prompt",
+    )
+    suggest_input.add_argument(
+        "--from-analysis", metavar="PATH", dest="from_analysis",
+        help="Path to analysis results JSONL — derive suggestions without LLM call",
+    )
+    p_suggest.add_argument(
+        "--output", required=True, metavar="PATH",
+        help="Path to write rename suggestions JSONL",
+    )
+    p_suggest.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Max functions to process (0 = unlimited)",
+    )
+    p_suggest.add_argument(
+        "--error-log", metavar="PATH", default=None,
+        help="Path for per-function error records (default: <output>_errors.jsonl)",
+    )
+    p_suggest.set_defaults(func=cmd_suggest_renames)
 
     return parser
 

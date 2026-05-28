@@ -1,29 +1,45 @@
-You are a reverse engineering assistant specializing in naming conventions.
+You are a reverse engineering assistant specializing in function naming.
 
-Given the following decompiled function, suggest clear, descriptive names for the function and its parameters using snake_case. Consider:
-- What the function appears to do based on its code
-- The names of functions it calls (callees)
-- Any string literals or constants it references
-- The context provided by its callers
+Given the decompiled function below, suggest a single clear, descriptive name for it.
 
-Return a JSON object with:
-- "suggested_name": snake_case function name
-- "suggested_params": list of snake_case parameter names in order
-- "rationale": one sentence explaining the naming choice
+Naming rules:
+- The name MUST be a valid C/Python identifier: only letters (a-z, A-Z), digits (0-9), and underscores (_)
+- Must NOT start with a digit
+- Must NOT contain spaces, hyphens, dots, or any special characters
+- Use snake_case (e.g. read_config_file) or camelCase (e.g. readConfigFile)
+- Keep it concise — 2 to 4 words joined without spaces
 
-Return ONLY the JSON object.
+Evidence to consider (use ONLY what is present, do not invent):
+- What the decompiled code visibly does
+- API/library functions called (callees)
+- String literals or constants referenced
+- The number of callers (xref count) as a signal of importance
+
+Confidence guide:
+- "high"   — the function's purpose is unambiguous from its code and callees
+- "medium" — the purpose is likely but one or more details are unclear
+- "low"    — the code is obfuscated, very short, or the purpose is genuinely uncertain
+
+Return a JSON object with exactly these fields:
+- "newName":    (string) the suggested identifier — no spaces, valid identifier
+- "confidence": (string) one of: low | medium | high
+- "reason":     (string) one sentence citing specific evidence for the name choice
+
+Return ONLY the JSON object. No markdown fences, no commentary outside the JSON.
 
 --- FUNCTION CONTEXT ---
 
-Name: {{ name }}
-Address: {{ address }}
-{% if callers %}Callers: {{ callers | join(", ") }}{% endif %}
-{% if callees %}Callees: {{ callees | join(", ") }}{% endif %}
-{% if strings %}Referenced strings: {{ strings | join(", ") }}{% endif %}
-
+Function name: {{ functionName }}
+Entry point:   {{ entryPoint }}
+{% if xrefCount is defined %}Cross-reference count: {{ xrefCount }}
+{% endif %}{% if callers is defined and callers %}Called by: {{ callers | join(", ") }}
+{% endif %}{% if callees is defined and callees %}Calls: {{ callees | join(", ") }}
+{% endif %}{% if strings is defined and strings %}Referenced strings: {{ strings | join(", ") }}
+{% endif %}{% if referencedStrings is defined and referencedStrings %}Referenced strings: {{ referencedStrings | join(", ") }}
+{% endif %}
 Decompiled code:
-{{ decompiled }}
+{{ decompiledCode }}
 
 --- END FUNCTION CONTEXT ---
 
-Respond with JSON only.
+Respond with the JSON object only.
