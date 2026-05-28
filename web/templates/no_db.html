@@ -2,19 +2,18 @@
 {% block title %}Setup Required — RE Toolkit{% endblock %}
 
 {% block content %}
-<div class="empty-state large">
-  <h2>Database not found</h2>
-  <p class="muted">Expected at: <code>{{ db_path }}</code></p>
-  <p>
-    Run the analysis pipeline first, then ingest the results:
-  </p>
-  <pre><code class="language-bash">python -m src.cli analyze \
-    --input  data/input/functions.jsonl \
-    --output data/output/results.jsonl
+<div id="drop-overlay" class="drop-overlay">
+  <div class="drop-overlay-inner">Drop JSONL to import</div>
+</div>
 
-python -m src.cli ingest \
-    --input data/output/results.jsonl \
-    --source-functions data/input/functions.jsonl</code></pre>
-  <p class="muted">Then refresh this page.</p>
+<div class="empty-state large">
+  <h2>Get Started: Import a Ghidra JSONL File</h2>
+  <p class="muted">Database not found at <code>{{ db_path }}</code>.</p>
+  <p class="muted">
+    Drop your exported function <code>.jsonl</code> file below.
+    The dashboard will run LLM analysis and ingest results automatically.
+  </p>
+
+  {% include "partials/drop_zone.html" %}
 </div>
 {% endblock %}

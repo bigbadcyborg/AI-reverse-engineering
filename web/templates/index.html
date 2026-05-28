@@ -2,6 +2,10 @@
 {% block title %}Functions — RE Toolkit{% endblock %}
 
 {% block content %}
+<div id="drop-overlay" class="drop-overlay">
+  <div class="drop-overlay-inner">Drop JSONL to import</div>
+</div>
+
 <div class="layout-page">
 
   <!-- ── Sidebar ─────────────────────────────────────────────── -->
@@ -45,6 +49,7 @@
 
   <!-- ── Main content ─────────────────────────────────────────── -->
   <div class="main-area">
+    {% include "partials/drop_zone.html" %}
 
     <!-- Search bar -->
     <div class="search-bar">
@@ -85,6 +90,7 @@
       </select>
 
       <span id="search-spinner" class="htmx-indicator muted" style="align-self:center;">searching...</span>
+      <button type="button" id="import-btn" class="outline secondary">Import JSONL</button>
     </div>
 
     <!-- Function list — HTMX swap target -->
@@ -94,4 +100,13 @@
 
   </div><!-- /main-area -->
 </div><!-- /layout-page -->
+
+<script>
+(() => {
+  const importBtn = document.getElementById("import-btn");
+  const fileInput = document.getElementById("upload-file");
+  if (!importBtn || !fileInput) return;
+  importBtn.addEventListener("click", () => fileInput.click());
+})();
+</script>
 {% endblock %}

@@ -22,7 +22,8 @@ All data stays on-device. No external requests are made by the server.
 
 from __future__ import annotations
 
-import json
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ from typing import Any
 from flask import (
     Flask,
     flash,
+    jsonify,
+    make_response,
     redirect,
     render_template,
     request,
@@ -59,6 +62,12 @@ def create_app(config: dict) -> Flask:
     db_path = Path(config.get("output", {}).get("db_path", "data/output/analysis.db"))
     report_dir = Path(config.get("output", {}).get("report_dir", "reports"))
     approved_path = db_path.parent / "approved_renames.json"
+    uploads_dir = _ROOT / "data" / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # In-memory import jobs (local process only)
+    _jobs: dict[str, dict[str, Any]] = {}
+    _jobs_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -110,6 +119,89 @@ def create_app(config: dict) -> Flask:
 
         save_approved_renames(entries, approved_path)
 
+    def _update_job(job_id: str, **updates: Any) -> None:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update(updates)
+
+    def _run_analysis_job(job_id: str, jsonl_path: Path) -> None:
+        from src import db, importer
+        from src.analyzer import Analyzer
+
+        try:
+            llm_cfg = config.get("llm", {})
+            analyzer = Analyzer(llm_cfg)
+
+            _update_job(job_id, status="loading", message="Loading input file...")
+            functions = list(importer.load(str(jsonl_path)))
+            total = len(functions)
+            if total == 0:
+                _update_job(
+                    job_id,
+                    status="error",
+                    message="The uploaded file has no valid function records.",
+                    total=0,
+                )
+                return
+
+            _update_job(
+                job_id,
+                status="running",
+                message="Analyzing functions with local LLM...",
+                total=total,
+                done=0,
+                errors=0,
+            )
+
+            results = []
+            decompiled_code_map: dict[str, str] = {}
+            errors = 0
+
+            for idx, fn in enumerate(functions, start=1):
+                ep = fn.get("entryPoint", "") or fn.get("entry_point", "")
+                if ep:
+                    decompiled = fn.get("decompiledCode", "") or fn.get("decompiled_code", "")
+                    if decompiled:
+                        decompiled_code_map[ep] = decompiled
+
+                try:
+                    result = analyzer.analyze_function(fn)
+                    results.append(result)
+                except Exception:
+                    errors += 1
+                finally:
+                    _update_job(job_id, done=idx, errors=errors)
+
+            if not results:
+                _update_job(
+                    job_id,
+                    status="error",
+                    message="Analysis failed for all functions. Check your model/server.",
+                )
+                return
+
+            _update_job(job_id, status="ingesting", message="Loading results into database...")
+            db.init_db(db_path)
+            inserted, updated = db.ingest_results(
+                results,
+                db_path,
+                source_file=jsonl_path.name,
+                decompiled_code_map=decompiled_code_map,
+            )
+
+            _update_job(
+                job_id,
+                status="complete",
+                message=(
+                    f"Import complete: {len(results)} analyzed, "
+                    f"{inserted} inserted, {updated} updated, {errors} errors."
+                ),
+                inserted=inserted,
+                updated=updated,
+            )
+        except Exception as exc:
+            _update_job(job_id, status="error", message=f"Import failed: {exc}")
+
     # ------------------------------------------------------------------
     # Routes
     # ------------------------------------------------------------------
@@ -143,6 +235,7 @@ def create_app(config: dict) -> Flask:
             category=category,
             confidence=confidence,
             limit=limit,
+            upload_job=None,
         )
 
     @app.route("/api/search")
@@ -167,6 +260,65 @@ def create_app(config: dict) -> Flask:
         )
 
         return render_template("partials/function_list.html", functions=functions, limit=limit)
+
+    @app.route("/api/upload", methods=["POST"])
+    def api_upload():
+        up = request.files.get("file")
+        if up is None or not up.filename:
+            return jsonify({"error": "No file uploaded."}), 400
+        if not up.filename.lower().endswith(".jsonl"):
+            return jsonify({"error": "Only .jsonl files are supported."}), 400
+
+        from src.analyzer import Analyzer
+
+        analyzer = Analyzer(config.get("llm", {}))
+        if not analyzer.ping():
+            return jsonify({
+                "error": (
+                    "LLM backend is not reachable. "
+                    "Start Ollama/local server and try again."
+                )
+            }), 503
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        safe_name = f"{ts}_{uuid.uuid4().hex}_{Path(up.filename).name}"
+        out_path = uploads_dir / safe_name
+        up.save(out_path)
+
+        job_id = uuid.uuid4().hex
+        with _jobs_lock:
+            _jobs[job_id] = {
+                "id": job_id,
+                "status": "queued",
+                "message": "Queued...",
+                "total": 0,
+                "done": 0,
+                "errors": 0,
+            }
+
+        thread = threading.Thread(
+            target=_run_analysis_job,
+            args=(job_id, out_path),
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify({"job_id": job_id})
+
+    @app.route("/api/job/<job_id>")
+    def api_job(job_id: str):
+        with _jobs_lock:
+            job = dict(_jobs.get(job_id, {}))
+        if not job:
+            return make_response(render_template(
+                "partials/progress_bar.html",
+                job={"id": job_id, "status": "error", "message": "Job not found."},
+            ), 404)
+
+        response = make_response(render_template("partials/progress_bar.html", job=job))
+        if job.get("status") in {"complete", "error"}:
+            response.headers["HX-Trigger"] = "jobComplete"
+        return response
 
     @app.route("/function/<path:entry_point>")
     def function_detail(entry_point: str):

@@ -1,0 +1,33 @@
+{% set total = job.total or 0 %}
+{% set done = job.done or 0 %}
+{% set errors = job.errors or 0 %}
+{% set percent = ((done * 100) // total) if total else 0 %}
+
+<div id="progress-poller" class="upload-progress-card">
+  <div class="upload-progress-header">
+    <strong>Import Status</strong>
+    <span class="muted">{{ job.status }}</span>
+  </div>
+
+  {% if total > 0 %}
+  <progress class="upload-progress" value="{{ done }}" max="{{ total }}"></progress>
+  <p class="muted upload-progress-meta">
+    {{ done }} / {{ total }} processed{% if errors %} ({{ errors }} errors){% endif %}
+    - {{ percent }}%
+  </p>
+  {% endif %}
+
+  <p class="{% if job.status == 'error' %}llm-error-text{% endif %}">
+    {{ job.message }}
+  </p>
+
+  {% if job.status in ["complete", "error"] %}
+  <p class="muted upload-progress-meta">
+    {% if job.status == "complete" %}
+      Done. Function list will refresh automatically.
+    {% else %}
+      Import stopped.
+    {% endif %}
+  </p>
+  {% endif %}
+</div>

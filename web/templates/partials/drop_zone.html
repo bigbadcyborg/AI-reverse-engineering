@@ -1,0 +1,119 @@
+<section class="drop-import-panel">
+  <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Drop JSONL file here">
+    <p class="drop-title">Drop Ghidra JSONL here</p>
+    <p class="muted drop-subtitle">or click to choose a <code>.jsonl</code> file</p>
+    <input id="upload-file" type="file" accept=".jsonl" hidden>
+  </div>
+
+  <div id="upload-errors"></div>
+  <div id="upload-progress"></div>
+</section>
+
+<script>
+(function () {
+  if (window.__reDropZoneInit) return;
+  window.__reDropZoneInit = true;
+
+  const dropZone = document.getElementById("drop-zone");
+  const fileInput = document.getElementById("upload-file");
+  const progressEl = document.getElementById("upload-progress");
+  const errorEl = document.getElementById("upload-errors");
+  const overlay = document.getElementById("drop-overlay");
+
+  if (!dropZone || !fileInput || !progressEl || !errorEl) return;
+
+  function clearError() {
+    errorEl.innerHTML = "";
+  }
+
+  function showError(message) {
+    errorEl.innerHTML = '<div class="llm-error">' + message + "</div>";
+  }
+
+  function showOverlay(active) {
+    if (!overlay) return;
+    overlay.classList.toggle("active", active);
+  }
+
+  function startJob(jobId) {
+    progressEl.innerHTML =
+      '<div id="progress-poller" ' +
+      'hx-get="/api/job/' + jobId + '" ' +
+      'hx-trigger="load, every 1s" ' +
+      'hx-swap="outerHTML">' +
+      '</div>';
+    if (window.htmx) window.htmx.process(progressEl);
+  }
+
+  async function uploadFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".jsonl")) {
+      showError("Please upload a .jsonl file.");
+      return;
+    }
+    clearError();
+
+    const fd = new FormData();
+    fd.append("file", file);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showError(data.error || "Upload failed.");
+        return;
+      }
+      startJob(data.job_id);
+    } catch (err) {
+      showError("Upload failed: " + err);
+    }
+  }
+
+  dropZone.addEventListener("click", () => fileInput.click());
+  dropZone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+  fileInput.addEventListener("change", (e) => {
+    uploadFile(e.target.files && e.target.files[0]);
+    fileInput.value = "";
+  });
+
+  ["dragenter", "dragover"].forEach((evt) => {
+    window.addEventListener(evt, (e) => {
+      e.preventDefault();
+      showOverlay(true);
+      dropZone.classList.add("drag-active");
+    });
+  });
+  ["dragleave", "drop"].forEach((evt) => {
+    window.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (evt === "dragleave" && e.relatedTarget) return;
+      showOverlay(false);
+      dropZone.classList.remove("drag-active");
+    });
+  });
+  window.addEventListener("drop", (e) => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    uploadFile(file);
+  });
+
+  document.body.addEventListener("jobComplete", () => {
+    const list = document.getElementById("function-list");
+    if (list && window.htmx) {
+      window.htmx.ajax("GET", "/api/search", {
+        target: "#function-list",
+        swap: "innerHTML"
+      });
+    } else {
+      window.location.reload();
+    }
+  });
+})();
+</script>
