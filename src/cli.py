@@ -17,16 +17,26 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 console = Console(highlight=False, legacy_windows=False)
 
 
 # ------------------------------------------------------------------
-# Config loading
+# Helpers
 # ------------------------------------------------------------------
 
 def _load_config(path: str) -> dict:
@@ -48,8 +58,17 @@ def _setup_logging(config: dict) -> None:
     )
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _default_error_log(output_path: Path) -> Path:
+    """Derive a default error log path from the output path."""
+    return output_path.parent / (output_path.stem + "_errors.jsonl")
+
+
 # ------------------------------------------------------------------
-# Command implementations
+# Commands
 # ------------------------------------------------------------------
 
 def cmd_ping(args: argparse.Namespace) -> None:
@@ -71,14 +90,20 @@ def cmd_ping(args: argparse.Namespace) -> None:
     else:
         console.print(
             "[red][FAIL] Backend is not reachable.[/red] "
-            "Make sure Ollama (or your LLM server) is running and the "
-            "base_url in config.json is correct."
+            "Make sure Ollama (or your LLM server) is running and "
+            "the base_url in config.json is correct."
         )
         sys.exit(1)
 
 
 def cmd_analyze(args: argparse.Namespace) -> None:
-    """Import decompiled functions and analyze them with the local LLM."""
+    """
+    Import decompiled functions and analyze them with the local LLM.
+
+    Results are written to the output file as JSONL incrementally — one line
+    per successfully analyzed function. If a function fails, the error is
+    logged to the error log and analysis continues with the next function.
+    """
     from src import importer, storage
     from src.analyzer import Analyzer
 
@@ -87,46 +112,97 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     log = logging.getLogger(__name__)
 
     analyzer = Analyzer(config["llm"])
+    out_path = Path(args.output)
+    error_log_path = Path(args.error_log) if args.error_log else _default_error_log(out_path)
 
-    # Connectivity check before spending time loading data
-    console.print("Checking LLM backend connectivity …")
+    # Connectivity check first
+    console.print("Checking LLM backend connectivity ...")
     if not analyzer.ping():
         console.print(
             "[red]Cannot reach LLM backend.[/red] "
             "Run [bold]python -m src.cli ping[/bold] for details."
         )
         sys.exit(1)
-    console.print("[green]Backend OK.[/green]")
+    console.print("[green]Backend OK.[/green]\n")
 
-    # Load functions
-    functions = list(importer.load(args.input))
-    max_fn = config.get("analysis", {}).get("max_functions_per_run", 50)
-    if len(functions) > max_fn:
+    # Load all functions (even JSONL loads fully — sizes are analyst-scale, not big-data)
+    console.print(f"Loading functions from [cyan]{args.input}[/cyan] ...")
+    try:
+        functions = list(importer.load(args.input))
+    except (ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]Failed to load input:[/red] {exc}")
+        sys.exit(1)
+
+    # Apply optional --limit (0 = unlimited, overrides config)
+    max_fn = args.limit if args.limit is not None else config.get("analysis", {}).get("max_functions_per_run", 0)
+    if max_fn and max_fn > 0 and len(functions) > max_fn:
         console.print(
-            f"[yellow]Input contains {len(functions)} functions; "
-            f"limiting to first {max_fn} per config.[/yellow]"
+            f"[yellow]Limiting to first {max_fn} of {len(functions)} functions "
+            f"(--limit / max_functions_per_run).[/yellow]"
         )
         functions = functions[:max_fn]
 
-    console.print(f"Loaded [bold]{len(functions)}[/bold] function(s) from [cyan]{args.input}[/cyan]")
+    total = len(functions)
+    console.print(f"Loaded [bold]{total}[/bold] function(s). Writing output to [cyan]{out_path}[/cyan]\n")
 
-    results = []
-    for i, fn in enumerate(functions, start=1):
-        name = fn.get("functionName", f"#{i}")
-        console.print(f"  [{i}/{len(functions)}] Analyzing [yellow]{name}[/yellow] …")
-        try:
-            result = analyzer.analyze_function(fn)
-            results.append(result)
-            log.debug("Raw LLM response for %s:\n%s", name, result.raw_response)
-        except Exception as exc:
-            console.print(f"    [red]Error analyzing {name}:[/red] {exc}")
-            log.debug("Exception details:", exc_info=True)
+    # Initialize fresh output file
+    storage.init_jsonl(out_path)
 
-    storage.save_results(results, args.output)
-    console.print(
-        f"\n[green]Done.[/green] Analyzed [bold]{len(results)}[/bold] function(s). "
-        f"Results saved to [cyan]{args.output}[/cyan]"
-    )
+    success_count = 0
+    error_count = 0
+
+    # Progress bar — works for both small and large batches
+    progress_cols = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+    ]
+
+    with Progress(*progress_cols, console=console, transient=False) as progress:
+        task = progress.add_task("Analyzing...", total=total)
+
+        for fn in functions:
+            name = fn.get("functionName", fn.get("entryPoint", "unknown"))
+            progress.update(task, description=f"[yellow]{name}[/yellow]")
+
+            try:
+                result = analyzer.analyze_function(fn)
+                storage.append_result_jsonl(result, out_path)
+                success_count += 1
+                log.debug("OK: %s -> %s", name, result.suggested_name)
+            except Exception as exc:
+                error_count += 1
+                ts = _utc_now()
+                log.error("[%s] Failed: %s: %s", ts, name, exc)
+                log.debug("Traceback:", exc_info=True)
+                storage.append_error_jsonl(error_log_path, fn, exc, ts)
+            finally:
+                progress.advance(task)
+
+        progress.update(task, description="Done")
+
+    # Summary
+    console.print()
+    if error_count == 0:
+        console.print(
+            f"[green]Batch complete.[/green] "
+            f"[bold]{success_count}[/bold] / {total} functions analyzed successfully."
+        )
+    else:
+        console.print(
+            f"[yellow]Batch complete with errors.[/yellow] "
+            f"[bold]{success_count}[/bold] succeeded, "
+            f"[bold red]{error_count}[/bold red] failed."
+        )
+        console.print(f"Error details: [cyan]{error_log_path}[/cyan]")
+
+    console.print(f"Results: [cyan]{out_path}[/cyan]")
+
+    if success_count == 0:
+        sys.exit(1)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -182,7 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # analyze
     p_analyze = sub.add_parser(
-        "analyze", help="Run LLM analysis on exported decompiled functions"
+        "analyze", help="Analyze decompiled functions with the local LLM"
     )
     p_analyze.add_argument(
         "--input", required=True, metavar="PATH",
@@ -190,7 +266,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_analyze.add_argument(
         "--output", required=True, metavar="PATH",
-        help="Path to write the analysis JSON output",
+        help="Path to write results (JSONL — one result per line)",
+    )
+    p_analyze.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Max functions to analyze (0 = unlimited; overrides config)",
+    )
+    p_analyze.add_argument(
+        "--error-log", metavar="PATH", default=None,
+        help="Path to write per-function error records (JSONL). "
+             "Defaults to <output-stem>_errors.jsonl",
     )
     p_analyze.set_defaults(func=cmd_analyze)
 
@@ -200,7 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_report.add_argument(
         "--input", required=True, metavar="PATH",
-        help="Path to the analysis JSON output file",
+        help="Path to analysis results (.json or .jsonl)",
     )
     p_report.add_argument(
         "--out", required=True, metavar="PATH",
@@ -214,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rename.add_argument(
         "--input", required=True, metavar="PATH",
-        help="Path to the analysis JSON output file",
+        help="Path to analysis results (.json or .jsonl)",
     )
     p_rename.add_argument(
         "--export", metavar="PATH", default=None,

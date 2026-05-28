@@ -7,7 +7,7 @@
     "temperature": 0.2
   },
   "analysis": {
-    "max_functions_per_run": 50,
+    "max_functions_per_run": 0,
     "context_window_chars": 8000,
     "batch_size": 5
   },
