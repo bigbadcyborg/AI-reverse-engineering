@@ -1,0 +1,308 @@
+/* ============================================================
+   RE Toolkit Dashboard — custom overrides for Pico.css dark slate
+   ============================================================ */
+
+/* ----------------------------------------------------------
+   Layout
+   ---------------------------------------------------------- */
+.layout-page {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+@media (max-width: 768px) {
+  .layout-page { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+}
+
+/* ----------------------------------------------------------
+   Top bar / nav
+   ---------------------------------------------------------- */
+.top-bar {
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  padding: 0.6rem 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--pico-background-color);
+}
+
+.app-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.top-bar nav ul li a.active {
+  color: var(--pico-primary);
+  font-weight: bold;
+}
+
+/* ----------------------------------------------------------
+   Sidebar
+   ---------------------------------------------------------- */
+.sidebar {
+  position: sticky;
+  top: 4rem;
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+}
+
+.sidebar-title {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-section {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pico-muted-color);
+  margin: 0.75rem 0 0.25rem;
+}
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 0.1rem; }
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 0.9rem;
+  color: var(--pico-color);
+  transition: background 0.15s;
+}
+
+.sidebar-link:hover { background: var(--pico-card-background-color); }
+.sidebar-link.active {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary);
+  font-weight: 600;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--pico-muted-color);
+}
+
+/* ----------------------------------------------------------
+   Search bar
+   ---------------------------------------------------------- */
+.search-bar {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+
+.search-bar input, .search-bar select { margin: 0; }
+
+@media (max-width: 900px) {
+  .search-bar { grid-template-columns: 1fr 1fr; }
+}
+
+/* ----------------------------------------------------------
+   Function list table
+   ---------------------------------------------------------- */
+.fn-table { width: 100%; font-size: 0.9rem; }
+.fn-table td, .fn-table th { vertical-align: middle; padding: 0.5rem 0.6rem; }
+.fn-table tbody tr:hover { background: var(--pico-card-background-color); }
+
+.fn-name { font-family: monospace; color: var(--pico-muted-color); font-size: 0.85rem; }
+.summary-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+/* ----------------------------------------------------------
+   Category badges & dots
+   ---------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cat-dot, .conf-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Category colors */
+.cat-crypto,    .cat-dot.cat-crypto    { background: rgba(168,85,247,0.25);  color: #c084fc; border: 1px solid rgba(168,85,247,0.5); }
+.cat-network,   .cat-dot.cat-network   { background: rgba(59,130,246,0.25);  color: #60a5fa; border: 1px solid rgba(59,130,246,0.5); }
+.cat-file_io,   .cat-dot.cat-file_io   { background: rgba(16,185,129,0.2);   color: #34d399; border: 1px solid rgba(16,185,129,0.5); }
+.cat-process,   .cat-dot.cat-process   { background: rgba(245,158,11,0.2);   color: #fbbf24; border: 1px solid rgba(245,158,11,0.5); }
+.cat-registry,  .cat-dot.cat-registry  { background: rgba(239,68,68,0.2);    color: #f87171; border: 1px solid rgba(239,68,68,0.5); }
+.cat-memory,    .cat-dot.cat-memory    { background: rgba(107,114,128,0.2);  color: #9ca3af; border: 1px solid rgba(107,114,128,0.4); }
+.cat-string_ops,.cat-dot.cat-string_ops{ background: rgba(99,102,241,0.2);   color: #a5b4fc; border: 1px solid rgba(99,102,241,0.5); }
+.cat-math,      .cat-dot.cat-math      { background: rgba(20,184,166,0.2);   color: #2dd4bf; border: 1px solid rgba(20,184,166,0.5); }
+.cat-error_handling, .cat-dot.cat-error_handling {
+  background: rgba(239,68,68,0.15); color: #fc8181;
+  border: 1px solid rgba(239,68,68,0.4);
+}
+
+/* Confidence text */
+.conf-text { font-weight: 600; font-size: 0.85rem; }
+.conf-high,   .conf-dot.conf-high   { color: #34d399; background: #34d399; }
+.conf-medium, .conf-dot.conf-medium { color: #fbbf24; background: #fbbf24; }
+.conf-low,    .conf-dot.conf-low    { color: #f87171; background: #f87171; }
+
+.conf-badge.conf-high   { background: rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
+.conf-badge.conf-medium { background: rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); }
+.conf-badge.conf-low    { background: rgba(239,68,68,0.2);  color:#f87171; border:1px solid rgba(239,68,68,0.4);  }
+
+.badge-approved { background: rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.4); }
+.badge-rejected { background: rgba(239,68,68,0.2);  color:#f87171; border:1px solid rgba(239,68,68,0.4); }
+
+/* ----------------------------------------------------------
+   Function detail page
+   ---------------------------------------------------------- */
+.fn-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.fn-badges { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+.addr     { font-size: 0.82rem; color: var(--pico-muted-color); }
+.addr-large { font-size: 1rem; color: var(--pico-muted-color); }
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .detail-grid { grid-template-columns: 1fr; }
+}
+
+/* Code section */
+.code-section h4 { margin-bottom: 0.5rem; }
+.code-block {
+  border-radius: 8px;
+  max-height: 600px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* Analysis sidebar cards */
+.analysis-card {
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.analysis-card h4 { margin-bottom: 0.5rem; font-size: 0.9rem; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--pico-muted-color); }
+
+.warning-card { border-color: rgba(245,158,11,0.35); }
+.rename-card  { border-color: rgba(99,102,241,0.35);  }
+
+.detail-list { margin: 0; padding-left: 1.2rem; font-size: 0.9rem; }
+.detail-list li { margin-bottom: 0.2rem; }
+
+/* Rename proposal */
+.rename-proposal { margin-bottom: 0.75rem; }
+.rename-names {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 1rem;
+}
+.old-name { color: var(--pico-muted-color); font-family: monospace; }
+.rename-arrow { color: var(--pico-muted-color); }
+.new-name { font-family: monospace; font-weight: bold; color: var(--pico-primary); }
+
+/* Approve section */
+.approve-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.9rem;
+}
+.approve-status.approved { color: #34d399; }
+.approve-status.rejected { color: #f87171; }
+.approve-status.pending  { color: var(--pico-muted-color); }
+
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot-approved { background: #34d399; }
+.dot-rejected { background: #f87171; }
+.dot-pending  { background: var(--pico-muted-color); }
+
+.approve-buttons { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.approve-buttons form { margin: 0; }
+
+.btn-sm { padding: 0.3rem 0.8rem; font-size: 0.85rem; }
+.btn-approve { background: var(--pico-primary); color: var(--pico-primary-inverse);
+  border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+.btn-approve:hover { filter: brightness(1.1); }
+.btn-reject { padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+
+.hint { font-size: 0.8rem; margin-top: 0.75rem; }
+
+/* ----------------------------------------------------------
+   Flash messages
+   ---------------------------------------------------------- */
+.flash {
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+}
+.flash-error { border-color: #f87171; color: #f87171; }
+
+/* ----------------------------------------------------------
+   Empty state
+   ---------------------------------------------------------- */
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--pico-muted-color);
+}
+.empty-state.large { padding: 5rem 2rem; }
+.empty-state.small { padding: 1.5rem 1rem; }
+.empty-state pre  { text-align: left; display: inline-block; }
+
+/* ----------------------------------------------------------
+   HTMX indicator
+   ---------------------------------------------------------- */
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease; font-size: 0.85rem; }
+.htmx-request .htmx-indicator { opacity: 1; }
+
+/* ----------------------------------------------------------
+   Misc
+   ---------------------------------------------------------- */
+.muted { color: var(--pico-muted-color); }
+pre code { font-size: 0.82rem; }

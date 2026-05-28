@@ -4,12 +4,13 @@ Database: SQLite-backed storage and full-text search for analysis results.
 Schema
 ------
 functions
-    One row per analyzed function. Mirrors AnalysisResult fields.
+    One row per analyzed function. Mirrors AnalysisResult fields plus
+    decompiled_code (populated when --source-functions is supplied to ingest).
     entry_point is the unique key — re-ingesting the same address upserts.
 
 functions_fts
     FTS5 virtual table over function_name, suggested_name, summary, and
-    side_effects text. Rebuilt in full after every ingest batch.
+    side_effects text. Triggers keep it in sync with the main table.
 
 Usage
 -----
@@ -17,7 +18,9 @@ Usage
 
     db_path = "data/output/analysis.db"
     init_db(db_path)
-    ingest_results(results, db_path, source_file="results.jsonl")
+    ingest_results(results, db_path,
+                   source_file="results.jsonl",
+                   decompiled_code_map={"0x1400139a0": "void FUN_..."})
 
     rows = search(db_path, query="command dispatch", confidence="high")
     stats = get_stats(db_path)
@@ -30,8 +33,7 @@ When no --query is given the filters are applied directly to the main table.
 
 Future extension points
 -----------------------
-The 'embedding' BLOB column is reserved for local vector embeddings (iteration 8).
-A separate embeddings_index table will be added at that point.
+The 'embedding' BLOB column is reserved for local vector embeddings (iteration 9).
 """
 
 from __future__ import annotations
@@ -50,19 +52,25 @@ from src.analyzer import AnalysisResult
 
 _DDL_FUNCTIONS = """
 CREATE TABLE IF NOT EXISTS functions (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_point   TEXT    UNIQUE NOT NULL,
-    function_name TEXT    NOT NULL DEFAULT '',
-    suggested_name TEXT   NOT NULL DEFAULT '',
-    summary       TEXT    NOT NULL DEFAULT '',
-    category      TEXT    NOT NULL DEFAULT '',
-    confidence    TEXT    NOT NULL DEFAULT '',
-    side_effects  TEXT    NOT NULL DEFAULT '[]',   -- JSON array
-    uncertainties TEXT    NOT NULL DEFAULT '[]',   -- JSON array
-    source_file   TEXT    NOT NULL DEFAULT '',
-    ingested_at   TEXT    NOT NULL DEFAULT '',
-    embedding     BLOB                             -- reserved for iteration 8
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_point     TEXT    UNIQUE NOT NULL,
+    function_name   TEXT    NOT NULL DEFAULT '',
+    suggested_name  TEXT    NOT NULL DEFAULT '',
+    summary         TEXT    NOT NULL DEFAULT '',
+    category        TEXT    NOT NULL DEFAULT '',
+    confidence      TEXT    NOT NULL DEFAULT '',
+    side_effects    TEXT    NOT NULL DEFAULT '[]',   -- JSON array
+    uncertainties   TEXT    NOT NULL DEFAULT '[]',   -- JSON array
+    decompiled_code TEXT    NOT NULL DEFAULT '',
+    source_file     TEXT    NOT NULL DEFAULT '',
+    ingested_at     TEXT    NOT NULL DEFAULT '',
+    embedding       BLOB                             -- reserved for iteration 9
 );
+"""
+
+# Migration: add decompiled_code to databases created before iteration 8
+_MIGRATE_DECOMPILED = """
+ALTER TABLE functions ADD COLUMN decompiled_code TEXT NOT NULL DEFAULT '';
 """
 
 _DDL_FTS = """
@@ -131,6 +139,11 @@ def init_db(db_path: str | Path) -> None:
     """Create the database schema if it does not already exist."""
     with _connect(db_path) as conn:
         conn.executescript(_DDL_FUNCTIONS + _DDL_FTS + _DDL_FTS_TRIGGERS)
+        # Non-destructive migration for pre-iteration-8 databases
+        try:
+            conn.execute(_MIGRATE_DECOMPILED)
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def ingest_results(
@@ -138,6 +151,7 @@ def ingest_results(
     db_path: str | Path,
     *,
     source_file: str = "",
+    decompiled_code_map: dict[str, str] | None = None,
 ) -> tuple[int, int]:
     """
     Insert or update analysis results in the database.
@@ -152,29 +166,32 @@ def ingest_results(
     inserted = 0
     updated = 0
 
+    dcode_map = decompiled_code_map or {}
+
     with _connect(db_path) as conn:
         for r in results:
-            # Check whether this entry_point already exists
             existing = conn.execute(
                 "SELECT id FROM functions WHERE entry_point = ?", (r.entry_point,)
             ).fetchone()
 
             side_effects_json  = json.dumps(r.side_effects,  ensure_ascii=False)
             uncertainties_json = json.dumps(r.uncertainties, ensure_ascii=False)
+            decompiled_code    = dcode_map.get(r.entry_point, "")
 
             if existing:
                 conn.execute(
                     """
                     UPDATE functions SET
-                        function_name  = ?,
-                        suggested_name = ?,
-                        summary        = ?,
-                        category       = ?,
-                        confidence     = ?,
-                        side_effects   = ?,
-                        uncertainties  = ?,
-                        source_file    = ?,
-                        ingested_at    = ?
+                        function_name   = ?,
+                        suggested_name  = ?,
+                        summary         = ?,
+                        category        = ?,
+                        confidence      = ?,
+                        side_effects    = ?,
+                        uncertainties   = ?,
+                        decompiled_code = CASE WHEN ? != '' THEN ? ELSE decompiled_code END,
+                        source_file     = ?,
+                        ingested_at     = ?
                     WHERE entry_point = ?
                     """,
                     (
@@ -185,6 +202,7 @@ def ingest_results(
                         r.confidence or "",
                         side_effects_json,
                         uncertainties_json,
+                        decompiled_code, decompiled_code,
                         source_file,
                         now,
                         r.entry_point,
@@ -197,8 +215,8 @@ def ingest_results(
                     INSERT INTO functions
                         (entry_point, function_name, suggested_name, summary,
                          category, confidence, side_effects, uncertainties,
-                         source_file, ingested_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         decompiled_code, source_file, ingested_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         r.entry_point,
@@ -209,6 +227,7 @@ def ingest_results(
                         r.confidence or "",
                         side_effects_json,
                         uncertainties_json,
+                        decompiled_code,
                         source_file,
                         now,
                     ),
@@ -243,6 +262,46 @@ def search(
         rows = _run_search(conn, query=query, category=category,
                            confidence=confidence, limit=limit)
     return [_deserialize_row(r) for r in rows]
+
+
+def get_function(db_path: str | Path, entry_point: str) -> dict[str, Any] | None:
+    """Return a single function row by entry_point, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM functions WHERE entry_point = ?", (entry_point,)
+        ).fetchone()
+    if row is None:
+        return None
+    return _deserialize_row(row)
+
+
+def all_results_as_analysis(db_path: str | Path) -> list:
+    """
+    Return all functions as AnalysisResult objects (for report generation).
+    Excludes decompiled_code and DB-only fields.
+    """
+    from src.analyzer import AnalysisResult  # deferred to avoid circular import
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM functions ORDER BY ingested_at DESC"
+        ).fetchall()
+
+    results = []
+    for row in rows:
+        d = _deserialize_row(row)
+        results.append(AnalysisResult(
+            function_name=d["function_name"],
+            entry_point=d["entry_point"],
+            summary=d["summary"],
+            suggested_name=d["suggested_name"],
+            category=d["category"],
+            confidence=d["confidence"],
+            side_effects=d["side_effects"],
+            uncertainties=d["uncertainties"],
+            raw_response="",
+        ))
+    return results
 
 
 def get_stats(db_path: str | Path) -> dict[str, Any]:

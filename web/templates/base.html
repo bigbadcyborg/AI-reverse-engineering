@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}RE Toolkit{% endblock %}</title>
+
+  <!-- Pico CSS — minimal semantic dark theme -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.slate.min.css">
+  <!-- Prism tomorrow-night — C syntax highlighting -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
+  <!-- Custom overrides -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- HTMX — HTML-first interactivity, no JS framework -->
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
+  <!-- Prism — loaded after body so it can scan rendered code blocks -->
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-c.min.js" defer></script>
+</head>
+<body>
+
+<header class="container-fluid top-bar">
+  <nav>
+    <ul>
+      <li>
+        <a href="/" class="app-title contrast">
+          <strong>RE Toolkit</strong>
+          <small class="muted">local LLM</small>
+        </a>
+      </li>
+    </ul>
+    <ul>
+      <li><a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">Functions</a></li>
+      <li><a href="/approved" class="{% if request.endpoint == 'approved_list' %}active{% endif %}">Approved Renames</a></li>
+      <li><a href="/report" class="outline contrast" role="button" style="padding:0.3rem 0.8rem">Export Report</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main class="container-fluid" style="padding: 1.5rem 2rem;">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div role="alert" class="flash {% if category == 'error' %}flash-error{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="container-fluid" style="padding:0.75rem 2rem; border-top:1px solid var(--pico-muted-border-color);">
+  <small class="muted">
+    Local LLM Reverse Engineering Toolkit &mdash; all analysis runs on-device &mdash;
+    <a href="/" class="muted">functions</a> &middot;
+    <a href="/approved" class="muted">approved</a>
+  </small>
+</footer>
+
+</body>
+</html>

@@ -12,6 +12,7 @@ Commands:
     approve-renames Create an approved renames file from suggestions for Ghidra import
     ingest         Load analysis results into the SQLite search database
     search         Search and filter analyzed functions in the database
+    dashboard      Start the local web dashboard
     ping           Check connectivity to the configured local LLM backend
 """
 
@@ -375,8 +376,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
     Re-ingesting the same file updates existing rows (upsert on entry_point).
     Run this after every 'analyze' run to keep the search index current.
+
+    Pass --source-functions to include decompiled code in the database, which
+    enables the code viewer in the local dashboard.
     """
-    from src import db, storage
+    from src import db, importer, storage
 
     config = _load_config(args.config)
     _setup_logging(config)
@@ -395,11 +399,30 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         console.print("[yellow]No results found in input file.[/yellow]")
         sys.exit(0)
 
+    # Optionally load decompiled code from the source functions file
+    decompiled_code_map: dict[str, str] = {}
+    if args.source_functions:
+        console.print(f"Loading decompiled code from [cyan]{args.source_functions}[/cyan] ...")
+        try:
+            functions = list(importer.load(args.source_functions))
+            for fn in functions:
+                ep = fn.get("entryPoint", fn.get("entry_point", ""))
+                code = fn.get("decompiledCode", fn.get("decompiled_code", ""))
+                if ep and code:
+                    decompiled_code_map[ep] = code
+            console.print(f"Loaded decompiled code for [bold]{len(decompiled_code_map)}[/bold] function(s).")
+        except (FileNotFoundError, ValueError) as exc:
+            console.print(f"[yellow]Warning: could not load source functions:[/yellow] {exc}")
+
     console.print(f"Initializing database at [cyan]{db_path}[/cyan] ...")
     db.init_db(db_path)
 
     source_label = Path(input_path).name
-    inserted, updated = db.ingest_results(results, db_path, source_file=source_label)
+    inserted, updated = db.ingest_results(
+        results, db_path,
+        source_file=source_label,
+        decompiled_code_map=decompiled_code_map or None,
+    )
 
     console.print(
         f"[green]Ingest complete.[/green] "
@@ -407,12 +430,52 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         f"({len(results)} total)."
     )
 
-    # Show quick stats after ingest
     stats = db.get_stats(db_path)
     console.print(
         f"Database total: [bold]{stats['total']}[/bold] functions across "
         f"[bold]{len(stats['by_category'])}[/bold] categories."
     )
+
+
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    """
+    Start the local web dashboard on http://localhost:<port>.
+
+    The dashboard reads from the SQLite database populated by 'ingest'.
+    It does not require the LLM backend to be running.
+
+    A browser window is opened automatically unless --no-browser is passed.
+    Stop the server with Ctrl-C.
+    """
+    try:
+        from flask import Flask  # noqa: F401 — just to check it's installed
+    except ImportError:
+        console.print(
+            "[red]Flask is not installed.[/red] "
+            "Run [bold]pip install flask[/bold] and try again."
+        )
+        sys.exit(1)
+
+    from src.dashboard import create_app
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+
+    host = args.host
+    port = args.port
+    url  = f"http://{host}:{port}"
+
+    console.print(f"Starting dashboard at [cyan]{url}[/cyan]")
+    console.print("Press [bold]Ctrl-C[/bold] to stop.\n")
+
+    app = create_app(config)
+
+    if not args.no_browser:
+        import threading
+        import webbrowser
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+
+    app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -763,10 +826,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to analysis results (.json or .jsonl)",
     )
     p_ingest.add_argument(
+        "--source-functions", metavar="PATH", default=None, dest="source_functions",
+        help="Path to original function JSON/JSONL — adds decompiled code to the DB "
+             "for display in the dashboard code viewer",
+    )
+    p_ingest.add_argument(
         "--db", metavar="PATH", default=None,
         help="Path to the SQLite database (default: output.db_path from config.json)",
     )
     p_ingest.set_defaults(func=cmd_ingest)
+
+    # dashboard
+    p_dash = sub.add_parser(
+        "dashboard",
+        help="Start the local web dashboard (http://localhost:5000 by default)",
+    )
+    p_dash.add_argument(
+        "--host", default="127.0.0.1", metavar="HOST",
+        help="Host to bind to (default: 127.0.0.1)",
+    )
+    p_dash.add_argument(
+        "--port", type=int, default=5000, metavar="PORT",
+        help="Port to listen on (default: 5000)",
+    )
+    p_dash.add_argument(
+        "--no-browser", action="store_true",
+        help="Do not open a browser window automatically",
+    )
+    p_dash.set_defaults(func=cmd_dashboard)
 
     # search
     p_search = sub.add_parser(

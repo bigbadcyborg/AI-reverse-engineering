@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Approved Renames — RE Toolkit{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem;">
+  <h2 style="margin:0;">Approved Renames</h2>
+  <code class="muted" style="font-size:0.8rem;">{{ approved_path }}</code>
+</div>
+
+{% if entries %}
+<p class="muted">
+  {{ entries | selectattr('approved') | list | length }} approved &middot;
+  {{ entries | rejectattr('approved') | list | length }} rejected &middot;
+  {{ entries | length }} total
+</p>
+<p class="muted hint">
+  These entries are ready for <code>ImportApprovedRenames.java</code> in Ghidra.
+  Only entries with <strong>Approved</strong> status will be applied.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Address</th>
+      <th>Old Name</th>
+      <th>New Name</th>
+      <th>Confidence</th>
+      <th>Status</th>
+      <th>Comment</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td><code class="addr">{{ e.entry_point | short_addr }}</code></td>
+      <td class="muted">{{ e.old_name }}</td>
+      <td>
+        <a href="/function/{{ e.entry_point }}">
+          <strong>{{ e.new_name }}</strong>
+        </a>
+      </td>
+      <td>
+        <span class="conf-text conf-{{ e.confidence }}">{{ e.confidence }}</span>
+      </td>
+      <td>
+        {% if e.approved %}
+          <span class="badge badge-approved">Approved</span>
+        {% else %}
+          <span class="badge badge-rejected">Rejected</span>
+        {% endif %}
+      </td>
+      <td class="muted" style="font-size:0.85rem; max-width:240px;">
+        {{ e.comment[:100] }}{% if e.comment | length > 100 %}...{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% else %}
+<div class="empty-state">
+  <p class="muted">No approved renames yet.</p>
+  <p>
+    Open a function from the <a href="/">function list</a> and click
+    <strong>Approve</strong> to add it here.
+  </p>
+</div>
+{% endif %}
+{% endblock %}

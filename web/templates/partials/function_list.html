@@ -1,0 +1,58 @@
+{% if functions %}
+<table class="fn-table">
+  <thead>
+    <tr>
+      <th style="width:140px;">Address</th>
+      <th>Original Name</th>
+      <th>Suggestion</th>
+      <th style="width:120px;">Category</th>
+      <th style="width:90px;">Confidence</th>
+      <th>Summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for fn in functions %}
+    <tr>
+      <td><code class="addr">{{ fn.entry_point | short_addr }}</code></td>
+
+      <td class="fn-name">{{ fn.function_name }}</td>
+
+      <td class="fn-suggestion">
+        {% if fn.suggested_name and fn.suggested_name != fn.function_name %}
+          <a href="/function/{{ fn.entry_point }}">
+            <strong>{{ fn.suggested_name }}</strong>
+          </a>
+        {% else %}
+          <a href="/function/{{ fn.entry_point }}" class="muted">view</a>
+        {% endif %}
+      </td>
+
+      <td>
+        {% if fn.category %}
+          <span class="badge cat-badge cat-{{ fn.category }}">{{ fn.category }}</span>
+        {% endif %}
+      </td>
+
+      <td>
+        <span class="conf-text conf-{{ fn.confidence }}">{{ fn.confidence }}</span>
+      </td>
+
+      <td class="summary-cell muted">{{ fn.summary | truncate_nl(120) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if functions | length == limit %}
+<p class="muted" style="text-align:center;margin-top:0.5rem;">
+  Showing {{ limit }} results.
+  <a href="/?limit={{ limit + 50 }}{{ ('&q=' + request.args.get('q','')) if request.args.get('q') }}">Show more</a>
+</p>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+  <p class="muted">No functions match the current filters.</p>
+  <p><a href="/">Clear filters</a></p>
+</div>
+{% endif %}

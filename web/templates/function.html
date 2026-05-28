@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}{{ fn.function_name }} — RE Toolkit{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:1rem;">
+  <a href="/" class="secondary">&larr; Back to list</a>
+</div>
+
+<!-- Function header -->
+<div class="fn-header">
+  <div>
+    <h2 style="margin-bottom:0.25rem;">{{ fn.function_name }}</h2>
+    <code class="addr-large">{{ fn.entry_point }}</code>
+    {% if fn.source_file %}
+      <span class="muted" style="margin-left:0.75rem; font-size:0.85rem;">from {{ fn.source_file }}</span>
+    {% endif %}
+  </div>
+  <div class="fn-badges">
+    {% if fn.category %}
+      <span class="badge cat-badge cat-{{ fn.category }}">{{ fn.category }}</span>
+    {% endif %}
+    <span class="badge conf-badge conf-{{ fn.confidence }}">{{ fn.confidence }} confidence</span>
+  </div>
+</div>
+
+<!-- Two-column layout -->
+<div class="detail-grid">
+
+  <!-- Left: decompiled code -->
+  <section class="code-section">
+    <h4>Decompiled Code</h4>
+    {% if fn.decompiled_code %}
+      <pre class="code-block"><code class="language-c">{{ fn.decompiled_code }}</code></pre>
+    {% else %}
+      <div class="empty-state small">
+        <p class="muted">
+          Decompiled code not available.<br>
+          Re-run <code>ingest --source-functions &lt;functions.jsonl&gt;</code> to include it.
+        </p>
+      </div>
+    {% endif %}
+  </section>
+
+  <!-- Right: analysis + rename -->
+  <aside class="analysis-section">
+
+    <!-- LLM Summary -->
+    <div class="analysis-card">
+      <h4>Summary</h4>
+      <p>{{ fn.summary or "No summary available." }}</p>
+    </div>
+
+    {% if fn.side_effects %}
+    <div class="analysis-card">
+      <h4>Side Effects</h4>
+      <ul class="detail-list">
+        {% for effect in fn.side_effects %}
+        <li>{{ effect }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if fn.uncertainties %}
+    <div class="analysis-card warning-card">
+      <h4>Uncertainties</h4>
+      <ul class="detail-list">
+        {% for u in fn.uncertainties %}
+        <li>{{ u }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <!-- Rename suggestion + approval -->
+    <div class="analysis-card rename-card">
+      <h4>Rename Suggestion</h4>
+      {% if fn.suggested_name and fn.suggested_name != fn.function_name %}
+        <div class="rename-proposal">
+          <div class="rename-names">
+            <span class="old-name">{{ fn.function_name }}</span>
+            <span class="rename-arrow">&#8594;</span>
+            <span class="new-name">{{ fn.suggested_name }}</span>
+          </div>
+        </div>
+
+        {% include "partials/approve_section.html" %}
+
+        <p class="muted hint">
+          Approved entries are written to <code>approved_renames.json</code>
+          and applied by <code>ImportApprovedRenames.java</code> in Ghidra.
+        </p>
+      {% else %}
+        <p class="muted">No rename suggestion available for this function.</p>
+      {% endif %}
+    </div>
+
+  </aside>
+</div><!-- /detail-grid -->
+{% endblock %}

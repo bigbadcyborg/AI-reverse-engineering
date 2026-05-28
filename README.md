@@ -58,7 +58,11 @@ AI-reverse-engineering-platform/
 │   ├── renamer.py          # Generate and display rename suggestions
 │   ├── approver.py         # Build approved-renames files for Ghidra import
 │   ├── db.py               # SQLite search database (FTS5 full-text search)
+│   ├── dashboard.py        # Local Flask web dashboard
 │   └── storage.py          # Persist analysis results locally
+├── web/
+│   ├── templates/          # Jinja2 HTML templates (base, index, function detail)
+│   └── static/             # CSS — dark theme, category badges, layout
 ├── data/
 │   ├── input/              # Drop exported decompiled function files here
 │   └── output/             # JSON analysis results are written here
@@ -193,6 +197,26 @@ analyzeHeadless <project_root> <project_name> ^
         data\output\import_log.jsonl
 ```
 
+### Start the local web dashboard
+
+```bash
+python -m src.cli dashboard
+```
+
+Opens `http://localhost:5000` automatically. Features:
+- **Function list** with live search (no page reload via HTMX)
+- **Category and confidence filters** in sidebar
+- **Decompiled code viewer** with C syntax highlighting
+- **LLM summary** with side effects and uncertainties
+- **Rename approval buttons** — writes directly to `approved_renames.json`
+- **Approved Renames** page showing pending Ghidra import queue
+- **Export Report** button — generates and downloads a Markdown report
+
+Options:
+```bash
+python -m src.cli dashboard --port 8080 --no-browser
+```
+
 ### Load analysis results into the search database
 
 ```bash
@@ -310,9 +334,9 @@ Each analyzed function produces a JSON object:
 | 5 | Rename suggestions with confidence + reasoning | Done |
 | 6 | Approved Ghidra import (ImportApprovedRenames.java) | Done |
 | 7 | SQLite search: category/confidence filters + FTS5 keyword search | Done |
-| 8 | Local embeddings and semantic search | Future |
-| 9 | Function clustering, call graph analysis | Future |
-| 10 | Local web dashboard | Future |
+| 8 | Local web dashboard with code viewer and rename approval | Done |
+| 9 | Local embeddings and semantic search | Future |
+| 10 | Function clustering, call graph analysis | Future |
 | 11 | Multi-model comparison | Future |
 
 ---

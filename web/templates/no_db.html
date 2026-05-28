@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Setup Required — RE Toolkit{% endblock %}
+
+{% block content %}
+<div class="empty-state large">
+  <h2>Database not found</h2>
+  <p class="muted">Expected at: <code>{{ db_path }}</code></p>
+  <p>
+    Run the analysis pipeline first, then ingest the results:
+  </p>
+  <pre><code class="language-bash">python -m src.cli analyze \
+    --input  data/input/functions.jsonl \
+    --output data/output/results.jsonl
+
+python -m src.cli ingest \
+    --input data/output/results.jsonl \
+    --source-functions data/input/functions.jsonl</code></pre>
+  <p class="muted">Then refresh this page.</p>
+</div>
+{% endblock %}

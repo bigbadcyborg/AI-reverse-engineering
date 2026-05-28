@@ -1,0 +1,43 @@
+<div id="approve-section">
+  {% if approval_status == 'approved' %}
+    <div class="approve-status approved">
+      <span class="status-dot dot-approved"></span>
+      <strong>Approved</strong>
+      &mdash; will be applied by ImportApprovedRenames.java
+    </div>
+    <form hx-post="/api/approve" hx-target="#approve-section" hx-swap="outerHTML">
+      <input type="hidden" name="entry_point" value="{{ fn.entry_point }}">
+      <input type="hidden" name="approved" value="false">
+      <button type="submit" class="outline secondary btn-sm">Revoke approval</button>
+    </form>
+
+  {% elif approval_status == 'rejected' %}
+    <div class="approve-status rejected">
+      <span class="status-dot dot-rejected"></span>
+      <strong>Rejected</strong>
+    </div>
+    <form hx-post="/api/approve" hx-target="#approve-section" hx-swap="outerHTML">
+      <input type="hidden" name="entry_point" value="{{ fn.entry_point }}">
+      <input type="hidden" name="approved" value="true">
+      <button type="submit" class="btn-sm">Approve</button>
+    </form>
+
+  {% else %}
+    <div class="approve-status pending muted">
+      <span class="status-dot dot-pending"></span>
+      Pending review
+    </div>
+    <div class="approve-buttons">
+      <form hx-post="/api/approve" hx-target="#approve-section" hx-swap="outerHTML" style="display:inline;">
+        <input type="hidden" name="entry_point" value="{{ fn.entry_point }}">
+        <input type="hidden" name="approved" value="true">
+        <button type="submit" class="btn-approve">Approve</button>
+      </form>
+      <form hx-post="/api/approve" hx-target="#approve-section" hx-swap="outerHTML" style="display:inline;">
+        <input type="hidden" name="entry_point" value="{{ fn.entry_point }}">
+        <input type="hidden" name="approved" value="false">
+        <button type="submit" class="outline secondary btn-reject">Reject</button>
+      </form>
+    </div>
+  {% endif %}
+</div>

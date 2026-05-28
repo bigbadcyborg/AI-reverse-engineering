@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Functions — RE Toolkit{% endblock %}
+
+{% block content %}
+<div class="layout-page">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <h3 class="sidebar-title">Database</h3>
+    <p class="muted" style="margin-bottom:0.5rem;">
+      <strong>{{ stats.total }}</strong> functions
+    </p>
+
+    <nav class="sidebar-nav">
+      <strong class="sidebar-section">Category</strong>
+      <a href="/" class="sidebar-link {% if not category %}active{% endif %}">
+        All <span class="count">{{ stats.total }}</span>
+      </a>
+      {% for cat, cnt in stats.by_category.items() %}
+      <a href="/?category={{ cat }}"
+         class="sidebar-link {% if category == cat %}active{% endif %}">
+        <span class="cat-dot cat-{{ cat }}"></span>
+        {{ cat }} <span class="count">{{ cnt }}</span>
+      </a>
+      {% endfor %}
+
+      <strong class="sidebar-section" style="margin-top:1rem;">Confidence</strong>
+      <a href="/?confidence=high"
+         class="sidebar-link {% if confidence == 'high' %}active{% endif %}">
+        <span class="conf-dot conf-high"></span>High
+        <span class="count">{{ stats.by_confidence.get('high', 0) }}</span>
+      </a>
+      <a href="/?confidence=medium"
+         class="sidebar-link {% if confidence == 'medium' %}active{% endif %}">
+        <span class="conf-dot conf-medium"></span>Medium
+        <span class="count">{{ stats.by_confidence.get('medium', 0) }}</span>
+      </a>
+      <a href="/?confidence=low"
+         class="sidebar-link {% if confidence == 'low' %}active{% endif %}">
+        <span class="conf-dot conf-low"></span>Low
+        <span class="count">{{ stats.by_confidence.get('low', 0) }}</span>
+      </a>
+    </nav>
+  </aside>
+
+  <!-- ── Main content ─────────────────────────────────────────── -->
+  <div class="main-area">
+
+    <!-- Search bar -->
+    <div class="search-bar">
+      <input
+        type="search"
+        id="search-input"
+        name="q"
+        value="{{ q }}"
+        placeholder="Search functions, summaries, side effects..."
+        autocomplete="off"
+        hx-get="/api/search"
+        hx-trigger="input changed delay:350ms, search"
+        hx-target="#function-list"
+        hx-include="#cat-select, #conf-select"
+        hx-indicator="#search-spinner"
+        style="margin-bottom:0;">
+
+      <select id="cat-select" name="category"
+        hx-get="/api/search"
+        hx-trigger="change"
+        hx-target="#function-list"
+        hx-include="#search-input, #conf-select">
+        <option value="">All categories</option>
+        {% for cat in stats.by_category.keys() %}
+        <option value="{{ cat }}" {% if category == cat %}selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+
+      <select id="conf-select" name="confidence"
+        hx-get="/api/search"
+        hx-trigger="change"
+        hx-target="#function-list"
+        hx-include="#search-input, #cat-select">
+        <option value="">All confidence</option>
+        <option value="high"   {% if confidence == 'high'   %}selected{% endif %}>High</option>
+        <option value="medium" {% if confidence == 'medium' %}selected{% endif %}>Medium</option>
+        <option value="low"    {% if confidence == 'low'    %}selected{% endif %}>Low</option>
+      </select>
+
+      <span id="search-spinner" class="htmx-indicator muted" style="align-self:center;">searching...</span>
+    </div>
+
+    <!-- Function list — HTMX swap target -->
+    <div id="function-list">
+      {% include "partials/function_list.html" %}
+    </div>
+
+  </div><!-- /main-area -->
+</div><!-- /layout-page -->
+{% endblock %}
