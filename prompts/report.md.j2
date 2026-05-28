@@ -1,0 +1,37 @@
+# Reverse Engineering Analysis Report
+
+**Generated:** {{ timestamp }}
+**Functions analyzed:** {{ results | length }}
+
+---
+
+{% for r in results %}
+## `{{ r.function_name }}` — `{{ r.entry_point }}`
+
+| Field | Value |
+|-------|-------|
+| **Suggested name** | `{{ r.suggested_name or "—" }}` |
+| **Category** | {{ r.category or "—" }} |
+| **Confidence** | {{ r.confidence }} |
+
+### Summary
+
+{{ r.summary or "_No summary generated._" }}
+
+{% if r.side_effects %}
+### Side Effects
+
+{% for se in r.side_effects %}- {{ se }}
+{% endfor %}
+{% endif %}
+{% if r.uncertainties %}
+### Uncertainties / Needs Review
+
+{% for u in r.uncertainties %}- {{ u }}
+{% endfor %}
+{% endif %}
+
+---
+{% endfor %}
+
+_All analysis is produced by a local LLM and should be treated as hypotheses, not ground truth. Validate all suggestions before applying changes._

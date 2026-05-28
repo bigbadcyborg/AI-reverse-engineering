@@ -1,54 +1,192 @@
 """
-Analyzer: send decompiled function data to a local LLM and parse structured responses.
+Analyzer: send decompiled function data to a local LLM and return structured results.
 
-Supports backends:
-  - ollama  (http://localhost:11434)
-  - llamacpp (any OpenAI-compatible /v1/chat/completions endpoint)
+Supported backends:
+  ollama   — native Ollama API  (POST /api/generate, format: "json")
+  llamacpp — OpenAI-compatible  (POST /v1/chat/completions, response_format: json_object)
 
-Each function is analyzed independently. The LLM is expected to return a JSON
-object matching the AnalysisResult schema.
+Output schema (AnalysisResult):
+  function_name  : original name as imported
+  entry_point    : address string
+  summary        : plain-English description
+  suggested_name : camelCase rename suggestion
+  category       : behavioral category label
+  confidence     : low | medium | high
+  side_effects   : list of observable side effects
+  uncertainties  : list of things requiring human review
+  raw_response   : verbatim LLM output for debugging
 """
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import httpx
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+
+PROMPT_DIR = Path(__file__).parent.parent / "prompts"
+
+VALID_CATEGORIES = {
+    "file_io", "network", "crypto", "memory", "string_ops", "math",
+    "control_flow", "input_validation", "process", "registry",
+    "error_handling", "unknown",
+}
+VALID_CONFIDENCE = {"low", "medium", "high"}
 
 
 @dataclass
 class AnalysisResult:
     """Structured output for a single analyzed function."""
 
-    name: str
-    address: str
+    function_name: str
+    entry_point: str
     summary: str = ""
     suggested_name: str = ""
-    suggested_params: list[str] = field(default_factory=list)
-    behavior_tags: list[str] = field(default_factory=list)
-    confidence: str = "low"   # low | medium | high
-    notes: str = ""
+    category: str = "unknown"
+    confidence: str = "low"
+    side_effects: list[str] = field(default_factory=list)
+    uncertainties: list[str] = field(default_factory=list)
     raw_response: str = ""
 
 
 class Analyzer:
-    """
-    Wraps a local LLM backend and analyzes decompiled functions.
-
-    Iteration 1: implement __init__, ping, and analyze_function.
-    """
+    """Wraps a local LLM backend and analyzes decompiled functions one at a time."""
 
     def __init__(self, config: dict[str, Any]) -> None:
-        # config is the parsed config.json["llm"] section
-        self.config = config
+        self.backend = config.get("backend", "ollama")
+        self.base_url = config.get("base_url", "http://localhost:11434").rstrip("/")
+        self.model = config.get("model", "codellama:13b-instruct")
+        self.timeout = float(config.get("timeout_seconds", 120))
+        self.temperature = float(config.get("temperature", 0.2))
+
+        self._jinja = Environment(
+            loader=FileSystemLoader(str(PROMPT_DIR)),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def ping(self) -> bool:
-        """Return True if the LLM backend is reachable."""
-        raise NotImplementedError("Iteration 1: Analyzer.ping not yet implemented.")
+        """Return True if the configured LLM backend is reachable."""
+        check_url = (
+            f"{self.base_url}/api/tags"
+            if self.backend == "ollama"
+            else f"{self.base_url}/v1/models"
+        )
+        try:
+            resp = httpx.get(check_url, timeout=10.0)
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     def analyze_function(self, function: dict[str, Any]) -> AnalysisResult:
         """
         Send a single function to the LLM and return a structured AnalysisResult.
 
-        Raises RuntimeError if the backend is unreachable or returns an unparseable response.
+        Raises:
+            TemplateNotFound  — if prompts/summarize.txt is missing
+            httpx.HTTPError   — on network / HTTP errors
+            RuntimeError      — if the LLM response cannot be parsed as JSON
         """
-        raise NotImplementedError("Iteration 1: Analyzer.analyze_function not yet implemented.")
+        prompt = self._render_prompt("summarize.txt", function)
+        raw = self._call_llm(prompt)
+        parsed = self._parse_json(raw)
+        return self._build_result(function, parsed, raw)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _render_prompt(self, template_name: str, function: dict[str, Any]) -> str:
+        try:
+            tmpl = self._jinja.get_template(template_name)
+        except TemplateNotFound:
+            raise TemplateNotFound(
+                f"Prompt template not found: {PROMPT_DIR / template_name}"
+            )
+        return tmpl.render(**function)
+
+    def _call_llm(self, prompt: str) -> str:
+        if self.backend == "ollama":
+            return self._call_ollama(prompt)
+        return self._call_llamacpp(prompt)
+
+    def _call_ollama(self, prompt: str) -> str:
+        url = f"{self.base_url}/api/generate"
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": self.temperature},
+        }
+        resp = httpx.post(url, json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()["response"]
+
+    def _call_llamacpp(self, prompt: str) -> str:
+        url = f"{self.base_url}/v1/chat/completions"
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "response_format": {"type": "json_object"},
+        }
+        resp = httpx.post(url, json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    @staticmethod
+    def _parse_json(raw: str) -> dict:
+        """
+        Parse JSON from the LLM response.
+
+        Some models wrap their JSON in markdown fences even when instructed not to.
+        This strips common fence patterns before parsing.
+        """
+        cleaned = raw.strip()
+        # Strip optional ```json ... ``` fences
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"LLM returned a response that could not be parsed as JSON.\n"
+                f"Error: {exc}\n"
+                f"Raw response (first 500 chars):\n{raw[:500]}"
+            ) from exc
+
+    @staticmethod
+    def _build_result(
+        function: dict[str, Any], parsed: dict, raw: str
+    ) -> AnalysisResult:
+        category = parsed.get("category", "unknown")
+        if category not in VALID_CATEGORIES:
+            category = "unknown"
+
+        confidence = parsed.get("confidence", "low")
+        if confidence not in VALID_CONFIDENCE:
+            confidence = "low"
+
+        return AnalysisResult(
+            function_name=function.get("functionName", ""),
+            entry_point=parsed.get("entryPoint", function.get("entryPoint", "")),
+            summary=parsed.get("summary", ""),
+            suggested_name=parsed.get("suggestedName", ""),
+            category=category,
+            confidence=confidence,
+            side_effects=parsed.get("sideEffects", []),
+            uncertainties=parsed.get("uncertainties", []),
+            raw_response=raw,
+        )

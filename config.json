@@ -2,7 +2,7 @@
   "llm": {
     "backend": "ollama",
     "base_url": "http://localhost:11434",
-    "model": "codellama:13b-instruct",
+    "model": "llama3.2:1b",
     "timeout_seconds": 120,
     "temperature": 0.2
   },
