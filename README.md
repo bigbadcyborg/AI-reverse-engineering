@@ -57,6 +57,7 @@ AI-reverse-engineering-platform/
 │   ├── reporter.py         # Generate Markdown reports
 │   ├── renamer.py          # Generate and display rename suggestions
 │   ├── approver.py         # Build approved-renames files for Ghidra import
+│   ├── db.py               # SQLite search database (FTS5 full-text search)
 │   └── storage.py          # Persist analysis results locally
 ├── data/
 │   ├── input/              # Drop exported decompiled function files here
@@ -192,6 +193,39 @@ analyzeHeadless <project_root> <project_name> ^
         data\output\import_log.jsonl
 ```
 
+### Load analysis results into the search database
+
+```bash
+python -m src.cli ingest --input data/output/results.jsonl
+```
+
+Re-ingesting the same file upserts (updates) existing rows — safe to run after each analysis pass.
+
+### Search analyzed functions
+
+```bash
+# Full-text search (BM25 ranked)
+python -m src.cli search --query "file parsing"
+python -m src.cli search --query "command dispatcher"
+
+# Filter by category
+python -m src.cli search --category crypto
+python -m src.cli search --category network
+python -m src.cli search --category file_io
+
+# Filter by confidence
+python -m src.cli search --confidence low
+
+# Combine filters
+python -m src.cli search --query "socket" --category network --limit 10
+
+# Database overview
+python -m src.cli search --stats
+```
+
+Category values produced by the LLM: `file_io`, `network`, `crypto`, `process`,
+`registry`, `memory`, `string_ops`, `math`, `error_handling`.
+
 ### Check LLM backend connectivity
 
 ```bash
@@ -275,9 +309,11 @@ Each analyzed function produces a JSON object:
 | 4 | Ghidra export script (ExportFunctions.java) | Done |
 | 5 | Rename suggestions with confidence + reasoning | Done |
 | 6 | Approved Ghidra import (ImportApprovedRenames.java) | Done |
-| 7 | Function clustering, call graph analysis | Future |
-| 8 | Local web dashboard, vector search | Future |
-| 9 | Multi-model comparison | Future |
+| 7 | SQLite search: category/confidence filters + FTS5 keyword search | Done |
+| 8 | Local embeddings and semantic search | Future |
+| 9 | Function clustering, call graph analysis | Future |
+| 10 | Local web dashboard | Future |
+| 11 | Multi-model comparison | Future |
 
 ---
 

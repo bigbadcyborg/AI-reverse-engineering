@@ -13,7 +13,8 @@
   },
   "output": {
     "report_dir": "reports/",
-    "data_dir": "data/output/"
+    "data_dir": "data/output/",
+    "db_path": "data/output/analysis.db"
   },
   "logging": {
     "level": "INFO",

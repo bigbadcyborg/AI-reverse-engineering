@@ -10,6 +10,8 @@ Commands:
     rename         Display rename suggestions from stored analysis results
     suggest-renames Generate focused rename suggestions with confidence and reasoning
     approve-renames Create an approved renames file from suggestions for Ghidra import
+    ingest         Load analysis results into the SQLite search database
+    search         Search and filter analyzed functions in the database
     ping           Check connectivity to the configured local LLM backend
 """
 
@@ -367,6 +369,179 @@ def cmd_suggest_renames(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_ingest(args: argparse.Namespace) -> None:
+    """
+    Load analysis results from a JSON/JSONL file into the SQLite search database.
+
+    Re-ingesting the same file updates existing rows (upsert on entry_point).
+    Run this after every 'analyze' run to keep the search index current.
+    """
+    from src import db, storage
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+
+    db_path = Path(args.db or config.get("output", {}).get("db_path", "data/output/analysis.db"))
+    input_path = args.input
+
+    console.print(f"Loading results from [cyan]{input_path}[/cyan] ...")
+    try:
+        results = storage.load_results(input_path)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Failed to load results:[/red] {exc}")
+        sys.exit(1)
+
+    if not results:
+        console.print("[yellow]No results found in input file.[/yellow]")
+        sys.exit(0)
+
+    console.print(f"Initializing database at [cyan]{db_path}[/cyan] ...")
+    db.init_db(db_path)
+
+    source_label = Path(input_path).name
+    inserted, updated = db.ingest_results(results, db_path, source_file=source_label)
+
+    console.print(
+        f"[green]Ingest complete.[/green] "
+        f"[bold]{inserted}[/bold] inserted, [bold]{updated}[/bold] updated "
+        f"({len(results)} total)."
+    )
+
+    # Show quick stats after ingest
+    stats = db.get_stats(db_path)
+    console.print(
+        f"Database total: [bold]{stats['total']}[/bold] functions across "
+        f"[bold]{len(stats['by_category'])}[/bold] categories."
+    )
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    """
+    Search and filter analyzed functions stored in the SQLite database.
+
+    Filters are AND-ed together. When --query is provided, results are ranked
+    by full-text relevance (BM25). Otherwise results are ordered by ingest time.
+
+    Example usage:
+        python -m src.cli search --query "file parsing"
+        python -m src.cli search --category crypto
+        python -m src.cli search --confidence low
+        python -m src.cli search --query "command" --confidence high
+        python -m src.cli search --stats
+    """
+    from rich.table import Table
+
+    from src import db
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+
+    db_path = Path(args.db or config.get("output", {}).get("db_path", "data/output/analysis.db"))
+
+    if not Path(db_path).exists():
+        console.print(
+            f"[red]Database not found:[/red] {db_path}\n"
+            "Run [bold]python -m src.cli ingest[/bold] first."
+        )
+        sys.exit(1)
+
+    # ---- Stats mode -----------------------------------------------------------
+    if args.stats:
+        stats = db.get_stats(db_path)
+        console.print(f"\n[bold]Database:[/bold] {db_path}")
+        console.print(f"[bold]Total functions:[/bold] {stats['total']}\n")
+
+        cat_table = Table(title="By Category", show_header=True, min_width=40)
+        cat_table.add_column("Category", style="cyan")
+        cat_table.add_column("Count", justify="right")
+        for cat, cnt in stats["by_category"].items():
+            cat_table.add_row(cat or "(none)", str(cnt))
+        console.print(cat_table)
+
+        conf_table = Table(title="By Confidence", show_header=True, min_width=40)
+        conf_table.add_column("Confidence")
+        conf_table.add_column("Count", justify="right")
+        _conf_colors = {"high": "green", "medium": "yellow", "low": "red"}
+        for conf, cnt in stats["by_confidence"].items():
+            color = _conf_colors.get(conf, "white")
+            conf_table.add_row(f"[{color}]{conf or '(none)'}[/{color}]", str(cnt))
+        console.print(conf_table)
+
+        if stats["sources"]:
+            console.print(f"\n[bold]Source files:[/bold] {', '.join(stats['sources'])}")
+        return
+
+    # ---- Search mode ----------------------------------------------------------
+    if not args.query and not args.category and not args.confidence:
+        console.print(
+            "[yellow]No filters provided.[/yellow] "
+            "Use --query, --category, --confidence, or --stats.\n"
+            "Run [bold]python -m src.cli search --help[/bold] for examples."
+        )
+        sys.exit(0)
+
+    rows = db.search(
+        db_path,
+        query=args.query or None,
+        category=args.category or None,
+        confidence=args.confidence or None,
+        limit=args.limit,
+    )
+
+    if not rows:
+        console.print("[yellow]No matching functions found.[/yellow]")
+        return
+
+    _conf_colors = {"high": "green", "medium": "yellow", "low": "red"}
+
+    table = Table(
+        title=f"Search Results ({len(rows)})",
+        show_header=True,
+        expand=True,
+    )
+    table.add_column("Address", style="dim", no_wrap=True, min_width=14)
+    table.add_column("Name -> Suggestion", min_width=30)
+    table.add_column("Category", min_width=12)
+    table.add_column("Conf.", min_width=8)
+    table.add_column("Summary")
+
+    for row in rows:
+        ep        = row["entry_point"]
+        old_name  = row["function_name"] or ""
+        new_name  = row["suggested_name"] or ""
+        cat       = row["category"] or ""
+        conf      = row["confidence"] or ""
+        summary   = (row["summary"] or "")[:120]
+        if len(row["summary"] or "") > 120:
+            summary += "..."
+
+        color = _conf_colors.get(conf, "white")
+
+        name_cell = (
+            f"[dim]{old_name}[/dim] -> [bold]{new_name}[/bold]"
+            if new_name and new_name != old_name
+            else old_name
+        )
+
+        table.add_row(
+            ep,
+            name_cell,
+            cat,
+            f"[{color}]{conf}[/{color}]",
+            summary,
+        )
+
+    console.print(table)
+
+    if args.query:
+        console.print(f"\n[dim]Query:[/dim] [italic]{args.query}[/italic]")
+    if args.limit and len(rows) == args.limit:
+        console.print(
+            f"[dim]Showing first {args.limit} results. "
+            "Use --limit N to see more.[/dim]"
+        )
+
+
 def cmd_approve_renames(args: argparse.Namespace) -> None:
     """
     Build an approved renames file from rename suggestions.
@@ -577,6 +752,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow renaming functions that already have a meaningful (non-auto) name in Ghidra",
     )
     p_approve.set_defaults(func=cmd_approve_renames)
+
+    # ingest
+    p_ingest = sub.add_parser(
+        "ingest",
+        help="Load analysis results into the SQLite search database",
+    )
+    p_ingest.add_argument(
+        "--input", required=True, metavar="PATH",
+        help="Path to analysis results (.json or .jsonl)",
+    )
+    p_ingest.add_argument(
+        "--db", metavar="PATH", default=None,
+        help="Path to the SQLite database (default: output.db_path from config.json)",
+    )
+    p_ingest.set_defaults(func=cmd_ingest)
+
+    # search
+    p_search = sub.add_parser(
+        "search",
+        help="Search and filter analyzed functions in the database",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python -m src.cli search --query 'file parsing'\n"
+            "  python -m src.cli search --category crypto\n"
+            "  python -m src.cli search --confidence low\n"
+            "  python -m src.cli search --query command --confidence high\n"
+            "  python -m src.cli search --stats\n"
+        ),
+    )
+    p_search.add_argument(
+        "--query", metavar="TEXT", default=None,
+        help="Full-text keyword search across function names, summaries, and side effects",
+    )
+    p_search.add_argument(
+        "--category", metavar="NAME", default=None,
+        help="Filter by category (e.g. file_io, network, crypto, process, registry)",
+    )
+    p_search.add_argument(
+        "--confidence",
+        choices=["low", "medium", "high"],
+        metavar="LEVEL",
+        default=None,
+        help="Filter by confidence level (low | medium | high)",
+    )
+    p_search.add_argument(
+        "--limit", type=int, default=20, metavar="N",
+        help="Maximum number of results to show (default: 20, 0 = unlimited)",
+    )
+    p_search.add_argument(
+        "--stats", action="store_true",
+        help="Show database statistics instead of search results",
+    )
+    p_search.add_argument(
+        "--db", metavar="PATH", default=None,
+        help="Path to the SQLite database (default: output.db_path from config.json)",
+    )
+    p_search.set_defaults(func=cmd_search)
 
     return parser
 
