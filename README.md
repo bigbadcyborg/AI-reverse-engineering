@@ -45,6 +45,101 @@ python -m src.cli search --query "crypto"
 
 ---
 
+## From C Source to JSONL (Ghidra)
+
+The repo includes [`test_target.c`](test_target.c), a small multi-function sample binary (file I/O, crypto-like XOR, network, process spawn) for exercising the full pipeline. Use it only on systems and binaries you are allowed to analyze.
+
+### 1. Compile the test program
+
+Use **`-O0 -g`** so Ghidra’s decompiler keeps distinct, readable functions (optimization can inline or merge them).
+
+**Windows (MinGW-w64 / MSYS2)**
+
+```bash
+gcc -o re_test_target.exe test_target.c -lws2_32 -O0 -g
+```
+
+**Linux**
+
+```bash
+gcc -o re_test_target test_target.c -O0 -g
+```
+
+**macOS**
+
+```bash
+gcc -o re_test_target test_target.c -O0 -g
+```
+
+Optional: create a minimal config file next to the binary so `read_config` has something to open:
+
+```ini
+server=127.0.0.1
+token=0123456789abcdef
+```
+
+Save as `app.cfg` in the same directory you run the program from.
+
+### 2. Import the binary into Ghidra
+
+1. Install [Ghidra](https://ghidra-sre.org/) (10.x or 11.x).
+2. **File → New Project** → Non-Shared Project → choose a folder and name.
+3. **File → Import File** → select `re_test_target.exe` (or your built binary).
+4. Accept the default format/language when prompted, then **Analyze** with default options and wait for analysis to finish.
+
+### 3. Export functions to JSONL (GUI)
+
+1. Copy or symlink this repo’s `ghidra_scripts/` folder into Ghidra’s script path, **or** add it once:
+   - **Edit → Tool Options → Script Directories** → add the path to `ghidra_scripts/`.
+2. Open **Window → Script Manager**.
+3. Filter for **ExportFunctions** (menu path: **Tools → RE Toolkit → Export Functions to JSONL**).
+4. Run the script.
+5. When prompted, save as e.g. `data/input/re_test_target.jsonl`.
+
+Each line in the file is one JSON object with fields such as `functionName`, `entryPoint`, `decompiledCode`, `calledFunctions`, and `referencedStrings` (the Python importer normalizes the last two to `callees` / `strings`).
+
+### 4. Export functions to JSONL (headless, Windows)
+
+Set `GHIDRA_HOME` to your Ghidra install, then run the wrapper from the repo root:
+
+```bat
+set GHIDRA_HOME=C:\Tools\ghidra_11.0
+ghidra_scripts\run_headless_export.bat re_test_target.exe data\input\re_test_target.jsonl
+```
+
+This imports the binary, runs analysis, executes `ExportFunctions.java`, and writes the JSONL path you pass as the second argument.
+
+**Headless without the batch file** (any OS):
+
+```bash
+$GHIDRA_HOME/support/analyzeHeadless \
+  /path/to/ghidra_project_dir HeadlessExport \
+  -import /path/to/re_test_target \
+  -postScript ExportFunctions.java /path/to/output.jsonl \
+  -scriptPath /path/to/ghidra_scripts \
+  -deleteProject
+```
+
+On Windows, use `analyzeHeadless.bat` under `%GHIDRA_HOME%\support\`.
+
+### 5. Feed the JSONL into the toolkit
+
+**Dashboard:** start `python -m src.cli dashboard` and drag `re_test_target.jsonl` onto the page.
+
+**CLI:**
+
+```bash
+python -m src.cli analyze \
+  --input  data/input/re_test_target.jsonl \
+  --output data/output/re_test_results.jsonl
+
+python -m src.cli ingest \
+  --input data/output/re_test_results.jsonl \
+  --source-functions data/input/re_test_target.jsonl
+```
+
+---
+
 ## Purpose
 
 This tool sits between a decompiler (e.g. Ghidra, Binary Ninja, IDA) and the analyst. It takes exported decompiled function data, sends it to a local LLM, and returns structured summaries, rename suggestions, and behavioral hypotheses.
