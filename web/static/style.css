@@ -41,6 +41,132 @@
   font-weight: bold;
 }
 
+.top-bar nav {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+}
+
+/* ----------------------------------------------------------
+   LLM settings (header)
+   ---------------------------------------------------------- */
+.llm-settings-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 280px;
+  max-width: 520px;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  background: var(--pico-card-background-color);
+  font-size: 0.82rem;
+}
+
+.llm-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.llm-conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.llm-conn-dot.reachable {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}
+
+.llm-conn-dot.unreachable {
+  background: #f87171;
+}
+
+.llm-backend-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+}
+
+.llm-base-url {
+  font-size: 0.72rem;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-settings-form {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.llm-model-label {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.llm-settings-form select {
+  margin: 0;
+  min-width: 140px;
+  max-width: 200px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+.llm-settings-form button {
+  margin: 0;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+}
+
+.llm-btn-apply {
+  font-weight: 600;
+}
+
+.llm-settings-msg {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.llm-settings-error {
+  color: #fda4af;
+}
+
+.llm-settings-ok {
+  color: #86efac;
+}
+
+.llm-models-error {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.llm-settings-loading {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  #llm-settings-mount {
+    width: 100%;
+    order: 10;
+  }
+  .llm-settings-bar {
+    max-width: 100%;
+  }
+}
+
 /* ----------------------------------------------------------
    Sidebar
    ---------------------------------------------------------- */

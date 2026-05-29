@@ -488,7 +488,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     console.print(f"Starting dashboard at [cyan]{url}[/cyan]")
     console.print("Press [bold]Ctrl-C[/bold] to stop.\n")
 
-    app = create_app(config)
+    app = create_app(config, config_path=Path(args.config).resolve())
 
     if not args.no_browser:
         import threading

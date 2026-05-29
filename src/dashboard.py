@@ -44,13 +44,21 @@ from flask import (
 _ROOT = Path(__file__).parent.parent
 
 
-def create_app(config: dict) -> Flask:
+_ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "loading", "ingesting"})
+
+
+def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
     """
     Flask application factory.
 
     Args:
-        config: parsed config.json as a dict
+        config: parsed config.json as a dict (mutated when LLM settings change)
+        config_path: path to config.json for persistence (default: project config.json)
     """
+    runtime_config = config
+    resolved_config_path = Path(config_path or _ROOT / "config.json")
+    _config_lock = threading.Lock()
+
     app = Flask(
         __name__,
         template_folder=str(_ROOT / "web" / "templates"),
@@ -72,6 +80,37 @@ def create_app(config: dict) -> Flask:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _get_llm_config() -> dict[str, Any]:
+        with _config_lock:
+            return dict(runtime_config.get("llm") or {})
+
+    def _has_active_import_job() -> bool:
+        with _jobs_lock:
+            return any(
+                j.get("status") in _ACTIVE_JOB_STATUSES for j in _jobs.values()
+            )
+
+    def _llm_settings_context(*, refresh_models: bool = False, message: str = "", error: str = "") -> dict[str, Any]:
+        from src.analyzer import Analyzer
+
+        llm_cfg = _get_llm_config()
+        analyzer = Analyzer(llm_cfg)
+        reachable = analyzer.ping()
+        models, _, models_error = analyzer.list_models(refresh=refresh_models)
+        current_model = llm_cfg.get("model", "")
+        if current_model and current_model not in models:
+            models = sorted(set(models) | {current_model}, key=str.lower)
+        return {
+            "backend": llm_cfg.get("backend", "ollama"),
+            "base_url": llm_cfg.get("base_url", ""),
+            "model": current_model,
+            "reachable": reachable,
+            "models": models,
+            "models_error": models_error or "",
+            "message": message,
+            "error": error,
+        }
 
     def _db_exists() -> bool:
         return db_path.exists()
@@ -130,7 +169,7 @@ def create_app(config: dict) -> Flask:
         from src.progress import PHASE_INGESTING, ProgressUpdate
 
         try:
-            llm_cfg = config.get("llm", {})
+            llm_cfg = _get_llm_config()
             analyzer = Analyzer(llm_cfg)
             model_name = llm_cfg.get("model", "")
             backend_name = llm_cfg.get("backend", "ollama")
@@ -302,7 +341,7 @@ def create_app(config: dict) -> Flask:
 
         from src.analyzer import Analyzer
 
-        analyzer = Analyzer(config.get("llm", {}))
+        analyzer = Analyzer(_get_llm_config())
         if not analyzer.ping():
             return jsonify({
                 "error": (
@@ -318,6 +357,7 @@ def create_app(config: dict) -> Flask:
 
         job_id = uuid.uuid4().hex
         started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        upload_llm = _get_llm_config()
         with _jobs_lock:
             _jobs[job_id] = {
                 "id": job_id,
@@ -329,8 +369,8 @@ def create_app(config: dict) -> Flask:
                 "errors": 0,
                 "current_function": "",
                 "entry_point": "",
-                "model": config.get("llm", {}).get("model", ""),
-                "backend": config.get("llm", {}).get("backend", "ollama"),
+                "model": upload_llm.get("model", ""),
+                "backend": upload_llm.get("backend", "ollama"),
                 "started_at": started_at,
             }
 
@@ -379,6 +419,55 @@ def create_app(config: dict) -> Flask:
         if job.get("status") in {"complete", "error"}:
             response.headers["HX-Trigger"] = "jobComplete"
         return response
+
+    @app.route("/api/llm/settings", methods=["GET"])
+    def api_llm_settings_get():
+        refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+        ctx = _llm_settings_context(refresh_models=refresh)
+        return render_template("partials/llm_settings.html", **ctx)
+
+    @app.route("/api/llm/models", methods=["GET"])
+    def api_llm_models():
+        refresh = request.args.get("refresh", "1").lower() in ("1", "true", "yes")
+        ctx = _llm_settings_context(refresh_models=refresh)
+        return render_template("partials/llm_settings.html", **ctx)
+
+    @app.route("/api/llm/settings", methods=["POST"])
+    def api_llm_settings_post():
+        from src.analyzer import Analyzer
+        from src.llm_config import invalidate_models_cache, save_config, update_llm_section
+
+        if _has_active_import_job():
+            ctx = _llm_settings_context(
+                error="Cannot change model while an import is in progress.",
+            )
+            return render_template("partials/llm_settings.html", **ctx), 409
+
+        model = (request.form.get("model") or "").strip()
+        if not model and request.is_json:
+            body = request.get_json(silent=True) or {}
+            model = (body.get("model") or "").strip()
+        if not model:
+            ctx = _llm_settings_context(error="Select or enter a model name.")
+            return render_template("partials/llm_settings.html", **ctx), 400
+
+        try:
+            with _config_lock:
+                update_llm_section(runtime_config, model=model)
+                save_config(resolved_config_path, runtime_config)
+            invalidate_models_cache()
+        except ValueError as exc:
+            ctx = _llm_settings_context(error=str(exc))
+            return render_template("partials/llm_settings.html", **ctx), 400
+
+        llm_cfg = _get_llm_config()
+        analyzer = Analyzer(llm_cfg)
+        reachable = analyzer.ping()
+        msg = f"Model set to {llm_cfg.get('model', model)}."
+        if not reachable:
+            msg += " Backend is not reachable — start Ollama before importing."
+        ctx = _llm_settings_context(refresh_models=True, message=msg)
+        return render_template("partials/llm_settings.html", **ctx)
 
     @app.route("/function/<path:entry_point>")
     def function_detail(entry_point: str):

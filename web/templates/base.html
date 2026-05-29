@@ -37,6 +37,12 @@
       <li><a href="/approved" class="{% if request.endpoint == 'approved_list' %}active{% endif %}">Approved Renames</a></li>
       <li><a href="/report" class="outline contrast" role="button" style="padding:0.3rem 0.8rem">Export Report</a></li>
     </ul>
+    <div id="llm-settings-mount"
+         hx-get="/api/llm/settings"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <span class="muted llm-settings-loading">Loading LLM settings…</span>
+    </div>
   </nav>
 </header>
 

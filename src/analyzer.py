@@ -94,6 +94,22 @@ class Analyzer:
         except Exception:
             return False
 
+    def list_models(self, *, refresh: bool = False) -> tuple[list[str], bool, str | None]:
+        """
+        List model names from the configured backend.
+
+        Returns:
+            (models, reachable, error_message)
+        """
+        from src.llm_config import list_models as _list_models
+
+        llm_cfg = {
+            "backend": self.backend,
+            "base_url": self.base_url,
+            "model": self.model,
+        }
+        return _list_models(llm_cfg, refresh=refresh)
+
     def rename_function(self, function: dict[str, Any]) -> "RenameResult":
         """
         Run the dedicated rename prompt on a single function.

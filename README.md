@@ -374,6 +374,7 @@ Opens `http://localhost:5000` automatically. Features:
 - **Export Report** button — generates and downloads a Markdown report
 - **Drag-and-drop JSONL import** — uploads raw function exports, runs LLM analysis in the background, and ingests into SQLite with progress tracking
 - **Live LLM progress** — during import, the progress card shows the current function name, phase (building prompt, waiting on Ollama, parsing response), model badge, elapsed time, and an estimated time remaining. Runtime scales with function count and model speed (local models often take several seconds per function).
+- **LLM model picker** — in the top navigation bar, choose the active Ollama/llama.cpp model, **Refresh** to reload the model list from your local server, and **Apply** to save to `config.json`. New JSONL imports use the selected model immediately (no dashboard restart). Imports in progress block model changes until they finish.
 
 Options:
 ```bash

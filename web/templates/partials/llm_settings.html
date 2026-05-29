@@ -1,0 +1,44 @@
+<div id="llm-settings-panel" class="llm-settings-bar">
+  {% if error %}
+  <p class="llm-settings-msg llm-settings-error">{{ error }}</p>
+  {% elif message %}
+  <p class="llm-settings-msg llm-settings-ok">{{ message }}</p>
+  {% endif %}
+
+  <div class="llm-settings-row">
+    <span class="llm-conn-dot{% if reachable %} reachable{% else %} unreachable{% endif %}"
+          title="{% if reachable %}Backend reachable{% else %}Backend unreachable{% endif %}"></span>
+    <span class="llm-backend-badge">{{ backend }}</span>
+    <span class="llm-base-url muted" title="{{ base_url }}">{{ base_url }}</span>
+  </div>
+
+  <form class="llm-settings-form"
+        hx-post="/api/llm/settings"
+        hx-target="#llm-settings-panel"
+        hx-swap="outerHTML">
+    <label class="llm-model-label" for="llm-model-select">Model</label>
+    <select id="llm-model-select" name="model" required>
+      {% if model and model not in models %}
+      <option value="{{ model }}" selected>{{ model }}</option>
+      {% endif %}
+      {% for m in models %}
+      <option value="{{ m }}" {% if m == model %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+      {% if not models and not model %}
+      <option value="" disabled selected>No models — refresh or check Ollama</option>
+      {% endif %}
+    </select>
+    <button type="button"
+            class="outline secondary llm-btn-refresh"
+            hx-get="/api/llm/models?refresh=1"
+            hx-target="#llm-settings-panel"
+            hx-swap="outerHTML">
+      Refresh
+    </button>
+    <button type="submit" class="llm-btn-apply">Apply</button>
+  </form>
+
+  {% if models_error %}
+  <p class="muted llm-models-error">Could not list models: {{ models_error }}</p>
+  {% endif %}
+</div>
