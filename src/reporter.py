@@ -3,13 +3,13 @@ Reporter: generate structured Markdown reports from analysis results.
 
 The report is organized into eight sections:
   1. Overview          — stats table, category breakdown, confidence distribution
-  2. High-Priority     — crypto, network, process, registry functions
+  2. High-Priority     — crypto, network, registry, and selected process functions
   3. File I/O          — file_io category
   4. Network           — network category
   5. Crypto            — crypto category
-  6. Rename Suggestions— full table of suggested renames
+  6. Rename Suggestions— validated rename suggestions only
   7. Low-Confidence    — results where confidence == "low"
-  8. Manual Review Queue — results with non-empty uncertainties
+  8. Manual Review Queue — results with non-empty uncertainties (post-filtered)
 """
 
 from __future__ import annotations
@@ -22,11 +22,21 @@ from typing import Sequence
 from jinja2 import Environment, FileSystemLoader
 
 from src.analyzer import AnalysisResult
+from src.postprocess import is_high_priority
+from src.renamer import is_informative, is_valid_identifier
 
 PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 
-# Categories treated as security-sensitive / high-priority
-HIGH_PRIORITY_CATEGORIES = {"crypto", "network", "process", "registry"}
+
+def _is_actionable_rename(result: AnalysisResult) -> bool:
+    name = (result.suggested_name or "").strip()
+    if not name:
+        return False
+    if name.lower() == (result.function_name or "").lower():
+        return False
+    if not is_valid_identifier(name):
+        return False
+    return is_informative(name)
 
 
 def _build_context(
@@ -35,15 +45,12 @@ def _build_context(
 ) -> dict:
     results = list(results)
 
-    high_priority = [r for r in results if r.category in HIGH_PRIORITY_CATEGORIES]
+    high_priority = [r for r in results if is_high_priority(r)]
     file_io = [r for r in results if r.category == "file_io"]
     network = [r for r in results if r.category == "network"]
     crypto = [r for r in results if r.category == "crypto"]
 
-    rename_suggestions = [
-        r for r in results
-        if r.suggested_name and r.suggested_name.lower() != r.function_name.lower()
-    ]
+    rename_suggestions = [r for r in results if _is_actionable_rename(r)]
 
     low_confidence = [r for r in results if r.confidence == "low"]
 

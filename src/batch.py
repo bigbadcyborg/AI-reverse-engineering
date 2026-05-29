@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Callable, Sequence
 
 from src.analyzer import AnalysisResult, Analyzer
+from src.postprocess import BatchContext
 from src.progress import (
     PHASE_ERROR,
     PHASE_LOADING,
@@ -37,6 +38,7 @@ def run_batch_analysis(
     results: list[AnalysisResult] = []
     decompiled_code_map: dict[str, str] = {}
     errors = 0
+    batch_context = BatchContext()
 
     if on_progress:
         on_progress(
@@ -77,7 +79,9 @@ def run_batch_analysis(
                 )
 
         try:
-            result = analyzer.analyze_function(fn, on_progress=_progress_cb)
+            result = analyzer.analyze_function(
+                fn, on_progress=_progress_cb, batch_context=batch_context
+            )
             results.append(result)
             if on_success:
                 on_success(result)

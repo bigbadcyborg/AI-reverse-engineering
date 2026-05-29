@@ -380,6 +380,17 @@ Options:
 python -m src.cli dashboard --port 8080 --no-browser
 ```
 
+### Analysis quality
+
+Results are shaped by three layers: **model choice**, **prompts** (`prompts/summarize.txt`), and **post-processing** (`src/postprocess.py`).
+
+- Use a code-oriented model for production work (see `config.example.json` for a reference setup). Very small models tend to over-report **high** confidence and mislabel categories.
+- After each LLM response, post-processing sanitizes rename identifiers, filters Ghidra decompiler noise from uncertainties, reclassifies CRT helpers as **runtime**, adjusts categories using callee/API signals, calibrates confidence, and disambiguates duplicate suggested names within a batch.
+- **High** confidence means the function has enough code context, no remaining uncertainties, and a valid name — not merely that the model sounded sure.
+- Markdown exports omit **runtime** from high-priority sections and only list rename suggestions that are valid Ghidra identifiers. Re-import JSONL after upgrading to refresh existing SQLite rows.
+
+See [change-report-5-29-26.md](change-report-5-29-26.md) for the full rationale.
+
 ### Load analysis results into the search database
 
 ```bash

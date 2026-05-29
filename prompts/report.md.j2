@@ -28,7 +28,7 @@
 | Metric | Count |
 |--------|------:|
 | Total functions analyzed | {{ total_count }} |
-| High-priority (crypto / network / process / registry) | {{ high_priority_count }} |
+| High-priority (crypto / network / registry / selected process) | {{ high_priority_count }} |
 | Functions with uncertainties | {{ review_queue_count }} |
 | Low-confidence findings | {{ low_confidence_count }} |
 | Rename suggestions generated | {{ rename_count }} |
@@ -55,8 +55,8 @@
 
 ## 2. High-Priority Functions
 
-> Functions in security-sensitive categories: **crypto**, **network**, **process**, **registry**.
-> These should be reviewed before lower-priority findings.
+> Security-sensitive functions: **crypto**, **network**, **registry**, and **process** only when command execution is evident (e.g. CreateProcess, system).
+> CRT/runtime helpers (category **runtime**) are excluded. Review these before lower-priority findings.
 
 {% if high_priority %}
 ### Quick Reference

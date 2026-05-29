@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from src.postprocess import BatchContext
     from src.progress import ProgressCallback
 
 import httpx
@@ -39,7 +40,7 @@ PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 VALID_CATEGORIES = {
     "file_io", "network", "crypto", "memory", "string_ops", "math",
     "control_flow", "input_validation", "process", "registry",
-    "error_handling", "unknown",
+    "error_handling", "runtime", "unknown",
 }
 VALID_CONFIDENCE = {"low", "medium", "high"}
 
@@ -150,6 +151,7 @@ class Analyzer:
         function: dict[str, Any],
         *,
         on_progress: "ProgressCallback | None" = None,
+        batch_context: "BatchContext | None" = None,
     ) -> AnalysisResult:
         """
         Send a single function to the LLM and return a structured AnalysisResult.
@@ -192,7 +194,7 @@ class Analyzer:
         raw = self._call_llm(prompt)
         _emit(PHASE_PARSING)
         parsed = self._parse_json(raw)
-        return self._build_result(function, parsed, raw)
+        return self._build_result(function, parsed, raw, batch_context)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -262,8 +264,13 @@ class Analyzer:
 
     @staticmethod
     def _build_result(
-        function: dict[str, Any], parsed: dict, raw: str
+        function: dict[str, Any],
+        parsed: dict,
+        raw: str,
+        batch_context: "BatchContext | None" = None,
     ) -> AnalysisResult:
+        from src.postprocess import refine
+
         category = parsed.get("category", "unknown")
         if category not in VALID_CATEGORIES:
             category = "unknown"
@@ -272,7 +279,7 @@ class Analyzer:
         if confidence not in VALID_CONFIDENCE:
             confidence = "low"
 
-        return AnalysisResult(
+        result = AnalysisResult(
             function_name=function.get("functionName", ""),
             entry_point=parsed.get("entryPoint", function.get("entryPoint", "")),
             summary=parsed.get("summary", ""),
@@ -283,3 +290,4 @@ class Analyzer:
             uncertainties=parsed.get("uncertainties", []),
             raw_response=raw,
         )
+        return refine(result, function, batch_context)

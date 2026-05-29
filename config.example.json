@@ -1,0 +1,23 @@
+{
+  "llm": {
+    "backend": "ollama",
+    "base_url": "http://localhost:11434",
+    "model": "codellama:13b-instruct",
+    "timeout_seconds": 120,
+    "temperature": 0.1
+  },
+  "analysis": {
+    "max_functions_per_run": 0,
+    "context_window_chars": 8000,
+    "batch_size": 5
+  },
+  "output": {
+    "report_dir": "reports/",
+    "data_dir": "data/output/",
+    "db_path": "data/output/analysis.db"
+  },
+  "logging": {
+    "level": "INFO",
+    "log_file": "data/output/run.log"
+  }
+}

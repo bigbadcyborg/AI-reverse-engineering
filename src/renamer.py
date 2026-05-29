@@ -126,6 +126,8 @@ def from_analysis_result(result: AnalysisResult) -> RenameResult | None:
 
     if original_name != name:
         reason = f"[name sanitized from '{original_name}'] {reason}"
+        if confidence == "high":
+            confidence = "medium"
 
     return RenameResult(
         entry_point=result.entry_point,
