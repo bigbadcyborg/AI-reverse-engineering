@@ -194,9 +194,15 @@ public class ExportFunctions extends GhidraScript {
                         collectReferencedStrings(func, refMgr, listing);
 
                     // -- XRef count (number of references TO this function) --
-                    Reference[] xrefs =
+                    int xrefCount = 0;
+                    ghidra.program.model.symbol.ReferenceIterator refIter =
                         refMgr.getReferencesTo(func.getEntryPoint());
-                    int xrefCount = (xrefs != null) ? xrefs.length : 0;
+                    if (refIter != null) {
+                        while (refIter.hasNext()) {
+                            refIter.next();
+                            xrefCount++;
+                        }
+                    }
 
                     // -- Entry point address --
                     String entryPoint =
@@ -329,7 +335,7 @@ public class ExportFunctions extends GhidraScript {
                 case '\f': sb.append("\\f");  break;
                 default:
                     if (c < 0x20) {
-                        // Escape other control characters as \uXXXX
+                        // Escape other control characters (JSON unicode escape)
                         sb.append(String.format("\\u%04x", (int) c));
                     } else {
                         sb.append(c);

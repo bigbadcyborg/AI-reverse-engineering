@@ -27,6 +27,7 @@ env/
 
 # Analysis outputs (may contain sensitive decompiled code)
 data/output/
+data/uploads/
 reports/
 
 # Logs
@@ -41,3 +42,8 @@ desktop.ini
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Test target
+re_test_target.exe
+app.cfg
+ghidra-saves/*

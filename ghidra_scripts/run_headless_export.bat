@@ -27,15 +27,25 @@ if "%~2"=="" (
     exit /b 1
 )
 
-set BINARY=%~f1
-set OUTPUT=%~f2
-set PROJECT_DIR=%TEMP%\ghidra_headless_project
-set SCRIPT_DIR=%~dp0
+set "BINARY=%~f1"
+set "OUTPUT=%~f2"
+set "PROJECT_DIR=%TEMP%\ghidra_headless_project"
+REM %~dp0 includes trailing backslash; strip it so quoted -scriptPath does not escape the closing quote
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
+for %%I in ("%OUTPUT%") do mkdir "%%~dpI" 2>nul
 
 if not defined GHIDRA_HOME (
     echo ERROR: GHIDRA_HOME is not set.
-    echo Set it to your Ghidra installation directory, e.g.:
-    echo   set GHIDRA_HOME=C:\Tools\ghidra_11.0
+    echo.
+    echo In Command Prompt ^(cmd^):
+    echo   set GHIDRA_HOME=C:\Tools\ghidra_12.1_PUBLIC
+    echo.
+    echo In PowerShell ^(set does NOT work — use $env:^):
+    echo   $env:GHIDRA_HOME = "C:\Tools\ghidra_12.1_PUBLIC"
+    echo.
+    echo Or use: ghidra_scripts\run_headless_export.ps1 -GhidraHome "C:\path\to\ghidra"
     exit /b 1
 )
 
@@ -53,20 +63,27 @@ echo Ghidra Headless Export
 echo   Binary  : %BINARY%
 echo   Output  : %OUTPUT%
 echo   Project : %PROJECT_DIR%
-echo   Script  : %SCRIPT_DIR%ExportFunctions.java
+echo   Script  : %SCRIPT_DIR%\ExportFunctions.java
 echo.
 
 "%GHIDRA_HOME%\support\analyzeHeadless.bat" ^
     "%PROJECT_DIR%" HeadlessExport ^
     -import "%BINARY%" ^
-    -postScript ExportFunctions.java "%OUTPUT%" ^
     -scriptPath "%SCRIPT_DIR%" ^
+    -postScript ExportFunctions.java "%OUTPUT%" ^
     -deleteProject ^
     -overwrite
 
 if errorlevel 1 (
     echo.
     echo ERROR: Ghidra headless analysis failed.
+    exit /b 1
+)
+
+if not exist "%OUTPUT%" (
+    echo.
+    echo ERROR: Output file was not created: %OUTPUT%
+    echo Check the log above for script compile errors ^(e.g. ExportFunctions.java^).
     exit /b 1
 )
 

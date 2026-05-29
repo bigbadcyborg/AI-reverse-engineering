@@ -100,10 +100,26 @@ Each line in the file is one JSON object with fields such as `functionName`, `en
 
 ### 4. Export functions to JSONL (headless, Windows)
 
-Set `GHIDRA_HOME` to your Ghidra install, then run the wrapper from the repo root:
+Set `GHIDRA_HOME` to your Ghidra install folder (the directory that contains `support\analyzeHeadless.bat`), then run the wrapper from the repo root.
+
+**PowerShell** (use `$env:`, not `set` — `set` only works in Command Prompt):
+
+```powershell
+$env:GHIDRA_HOME = "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+.\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\re_test_target.jsonl
+```
+
+Or pass the Ghidra path on one line:
+
+```powershell
+.\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\re_test_target.jsonl `
+    -GhidraHome "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+```
+
+**Command Prompt (cmd):**
 
 ```bat
-set GHIDRA_HOME=C:\Tools\ghidra_11.0
+set GHIDRA_HOME=C:\Users\sully\Documents\ghidra_12.1_PUBLIC
 ghidra_scripts\run_headless_export.bat re_test_target.exe data\input\re_test_target.jsonl
 ```
 
@@ -210,7 +226,8 @@ AI-reverse-engineering-platform/
 ├── ghidra_scripts/         # Ghidra helper scripts
 │   ├── ExportFunctions.java        # Export decompiled functions to JSONL
 │   ├── ImportApprovedRenames.java  # Apply approved renames/comments to Ghidra
-│   └── run_headless_export.bat     # Wrapper for headless export on Windows
+│   ├── run_headless_export.bat     # Headless export wrapper (cmd)
+│   └── run_headless_export.ps1     # Headless export wrapper (PowerShell)
 ├── config.json             # Runtime configuration (model, endpoint, limits)
 ├── requirements.txt
 ├── .gitignore
