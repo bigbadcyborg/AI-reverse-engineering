@@ -2,31 +2,58 @@
 {% set done = job.done or 0 %}
 {% set errors = job.errors or 0 %}
 {% set percent = ((done * 100) // total) if total else 0 %}
+{% set phase = job.phase or job.status or '' %}
+{% set is_waiting = phase == 'waiting_llm' %}
 
-<div id="progress-poller" class="upload-progress-card">
+<div id="progress-poller"
+     class="upload-progress-card{% if is_waiting %} waiting-llm{% endif %}"
+     {% if job.id and job.status not in ['complete', 'error'] %}
+     hx-get="/api/job/{{ job.id }}"
+     hx-trigger="every 500ms"
+     hx-swap="outerHTML"
+     {% endif %}>
   <div class="upload-progress-header">
-    <strong>Import Status</strong>
-    <span class="muted">{{ job.status }}</span>
+    <div>
+      <strong>LLM Analysis</strong>
+      {% if job.model %}
+      <span class="model-badge">{{ job.model }}</span>
+      {% endif %}
+    </div>
+    <span class="phase-badge phase-{{ phase }}">{{ job.phase_label or phase }}</span>
   </div>
 
   {% if total > 0 %}
   <progress class="upload-progress" value="{{ done }}" max="{{ total }}"></progress>
-  <p class="muted upload-progress-meta">
-    {{ done }} / {{ total }} processed{% if errors %} ({{ errors }} errors){% endif %}
-    - {{ percent }}%
+  {% endif %}
+
+  {% if job.current_function and phase in ['prompting', 'waiting_llm', 'parsing'] %}
+  <p class="current-function">
+    <code>{{ job.current_function }}</code>
+    {% if job.entry_point %}
+    <span class="muted">@ {{ job.entry_point }}</span>
+    {% endif %}
   </p>
   {% endif %}
 
-  <p class="{% if job.status == 'error' %}llm-error-text{% endif %}">
+  <p class="status-message{% if job.status == 'error' %} llm-error-text{% endif %}">
     {{ job.message }}
   </p>
 
-  {% if job.status in ["complete", "error"] %}
   <p class="muted upload-progress-meta">
-    {% if job.status == "complete" %}
+    {% if total > 0 %}
+    {{ done }} / {{ total }} complete ({{ percent }}%)
+    {% endif %}
+    {% if errors %} &middot; {{ errors }} error(s){% endif %}
+    {% if job.elapsed_display %} &middot; elapsed {{ job.elapsed_display }}{% endif %}
+    {% if job.eta_display %} &middot; ETA ~{{ job.eta_display }}{% endif %}
+  </p>
+
+  {% if job.status in ['complete', 'error'] %}
+  <p class="muted upload-progress-meta">
+    {% if job.status == 'complete' %}
       Done. Function list will refresh automatically.
     {% else %}
-      Import stopped.
+      Import stopped. Check the message above.
     {% endif %}
   </p>
   {% endif %}

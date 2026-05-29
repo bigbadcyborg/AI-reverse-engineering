@@ -109,8 +109,9 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     per successfully analyzed function. If a function fails, the error is
     logged to the error log and analysis continues with the next function.
     """
-    from src import importer, storage
+    from src import batch, importer, storage
     from src.analyzer import Analyzer
+    from src.progress import PHASE_LABELS, ProgressUpdate
 
     config = _load_config(args.config)
     _setup_logging(config)
@@ -156,7 +157,6 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     success_count = 0
     error_count = 0
 
-    # Progress bar — works for both small and large batches
     progress_cols = [
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -166,28 +166,48 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         TimeElapsedColumn(),
     ]
 
+    def _phase_label(phase: str) -> str:
+        return PHASE_LABELS.get(phase, phase.replace("_", " "))
+
     with Progress(*progress_cols, console=console, transient=False) as progress:
         task = progress.add_task("Analyzing...", total=total)
 
-        for fn in functions:
+        def on_progress(update: ProgressUpdate) -> None:
+            label = _phase_label(update.phase)
+            fn_label = update.function_name or "unknown"
+            progress.update(
+                task,
+                completed=update.completed,
+                description=(
+                    f"[cyan]{label}[/cyan] [yellow]{fn_label}[/yellow] "
+                    f"({update.current}/{update.total})"
+                ),
+            )
+
+        def on_success(result) -> None:
+            nonlocal success_count
+            storage.append_result_jsonl(result, out_path)
+            success_count += 1
+            log.debug("OK: %s -> %s", result.function_name, result.suggested_name)
+
+        def on_error(fn, exc) -> None:
+            nonlocal error_count
+            error_count += 1
             name = fn.get("functionName", fn.get("entryPoint", "unknown"))
-            progress.update(task, description=f"[yellow]{name}[/yellow]")
+            ts = _utc_now()
+            log.error("[%s] Failed: %s: %s", ts, name, exc)
+            log.debug("Traceback:", exc_info=True)
+            storage.append_error_jsonl(error_log_path, fn, exc, ts)
 
-            try:
-                result = analyzer.analyze_function(fn)
-                storage.append_result_jsonl(result, out_path)
-                success_count += 1
-                log.debug("OK: %s -> %s", name, result.suggested_name)
-            except Exception as exc:
-                error_count += 1
-                ts = _utc_now()
-                log.error("[%s] Failed: %s: %s", ts, name, exc)
-                log.debug("Traceback:", exc_info=True)
-                storage.append_error_jsonl(error_log_path, fn, exc, ts)
-            finally:
-                progress.advance(task)
+        _, error_count, _ = batch.run_batch_analysis(
+            functions,
+            analyzer,
+            on_progress=on_progress,
+            on_success=on_success,
+            on_error=on_error,
+        )
 
-        progress.update(task, description="Done")
+        progress.update(task, completed=total, description="[green]Done[/green]")
 
     # Summary
     console.print()

@@ -38,9 +38,11 @@
   function startJob(jobId) {
     progressEl.innerHTML =
       '<div id="progress-poller" ' +
+      'class="upload-progress-card" ' +
       'hx-get="/api/job/' + jobId + '" ' +
-      'hx-trigger="load, every 1s" ' +
+      'hx-trigger="load, every 500ms" ' +
       'hx-swap="outerHTML">' +
+      '<p class="muted status-message">Starting import...</p>' +
       '</div>';
     if (window.htmx) window.htmx.process(progressEl);
   }

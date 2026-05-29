@@ -47,3 +47,4 @@ htmlcov/
 re_test_target.exe
 app.cfg
 ghidra-saves/*
+data/input/re_test_target.jsonl

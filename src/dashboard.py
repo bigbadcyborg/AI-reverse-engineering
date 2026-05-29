@@ -125,20 +125,32 @@ def create_app(config: dict) -> Flask:
                 _jobs[job_id].update(updates)
 
     def _run_analysis_job(job_id: str, jsonl_path: Path) -> None:
-        from src import db, importer
+        from src import batch, db, importer
         from src.analyzer import Analyzer
+        from src.progress import PHASE_INGESTING, ProgressUpdate
 
         try:
             llm_cfg = config.get("llm", {})
             analyzer = Analyzer(llm_cfg)
+            model_name = llm_cfg.get("model", "")
+            backend_name = llm_cfg.get("backend", "ollama")
 
-            _update_job(job_id, status="loading", message="Loading input file...")
+            _update_job(
+                job_id,
+                status="loading",
+                phase="loading",
+                message="Loading input file...",
+                model=model_name,
+                backend=backend_name,
+                started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
             functions = list(importer.load(str(jsonl_path)))
             total = len(functions)
             if total == 0:
                 _update_job(
                     job_id,
                     status="error",
+                    phase="error",
                     message="The uploaded file has no valid function records.",
                     total=0,
                 )
@@ -147,40 +159,52 @@ def create_app(config: dict) -> Flask:
             _update_job(
                 job_id,
                 status="running",
-                message="Analyzing functions with local LLM...",
+                phase="running",
+                message="Starting LLM analysis...",
                 total=total,
                 done=0,
                 errors=0,
             )
 
-            results = []
-            decompiled_code_map: dict[str, str] = {}
-            errors = 0
+            def on_progress(update: ProgressUpdate) -> None:
+                if update.phase == "error":
+                    status = "error"
+                else:
+                    status = "running"
+                _update_job(
+                    job_id,
+                    status=status,
+                    phase=update.phase,
+                    message=update.message,
+                    done=update.completed,
+                    total=update.total or total,
+                    errors=update.errors,
+                    current_function=update.function_name,
+                    entry_point=update.entry_point,
+                    model=update.model or model_name,
+                )
 
-            for idx, fn in enumerate(functions, start=1):
-                ep = fn.get("entryPoint", "") or fn.get("entry_point", "")
-                if ep:
-                    decompiled = fn.get("decompiledCode", "") or fn.get("decompiled_code", "")
-                    if decompiled:
-                        decompiled_code_map[ep] = decompiled
-
-                try:
-                    result = analyzer.analyze_function(fn)
-                    results.append(result)
-                except Exception:
-                    errors += 1
-                finally:
-                    _update_job(job_id, done=idx, errors=errors)
+            results, errors, decompiled_code_map = batch.run_batch_analysis(
+                functions,
+                analyzer,
+                on_progress=on_progress,
+            )
 
             if not results:
                 _update_job(
                     job_id,
                     status="error",
+                    phase="error",
                     message="Analysis failed for all functions. Check your model/server.",
                 )
                 return
 
-            _update_job(job_id, status="ingesting", message="Loading results into database...")
+            _update_job(
+                job_id,
+                status="ingesting",
+                phase=PHASE_INGESTING,
+                message="Loading results into database...",
+            )
             db.init_db(db_path)
             inserted, updated = db.ingest_results(
                 results,
@@ -192,6 +216,8 @@ def create_app(config: dict) -> Flask:
             _update_job(
                 job_id,
                 status="complete",
+                phase="complete",
+                done=total,
                 message=(
                     f"Import complete: {len(results)} analyzed, "
                     f"{inserted} inserted, {updated} updated, {errors} errors."
@@ -200,7 +226,12 @@ def create_app(config: dict) -> Flask:
                 updated=updated,
             )
         except Exception as exc:
-            _update_job(job_id, status="error", message=f"Import failed: {exc}")
+            _update_job(
+                job_id,
+                status="error",
+                phase="error",
+                message=f"Import failed: {exc}",
+            )
 
     # ------------------------------------------------------------------
     # Routes
@@ -286,14 +317,21 @@ def create_app(config: dict) -> Flask:
         up.save(out_path)
 
         job_id = uuid.uuid4().hex
+        started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with _jobs_lock:
             _jobs[job_id] = {
                 "id": job_id,
                 "status": "queued",
+                "phase": "queued",
                 "message": "Queued...",
                 "total": 0,
                 "done": 0,
                 "errors": 0,
+                "current_function": "",
+                "entry_point": "",
+                "model": config.get("llm", {}).get("model", ""),
+                "backend": config.get("llm", {}).get("backend", "ollama"),
+                "started_at": started_at,
             }
 
         thread = threading.Thread(
@@ -307,6 +345,12 @@ def create_app(config: dict) -> Flask:
 
     @app.route("/api/job/<job_id>")
     def api_job(job_id: str):
+        from src.progress import (
+            PHASE_LABELS,
+            elapsed_seconds_since,
+            estimate_eta_seconds,
+        )
+
         with _jobs_lock:
             job = dict(_jobs.get(job_id, {}))
         if not job:
@@ -314,6 +358,22 @@ def create_app(config: dict) -> Flask:
                 "partials/progress_bar.html",
                 job={"id": job_id, "status": "error", "message": "Job not found."},
             ), 404)
+
+        elapsed = elapsed_seconds_since(job.get("started_at", ""))
+        done = job.get("done", 0) or 0
+        total = job.get("total", 0) or 0
+        job["elapsed_seconds"] = elapsed
+        eta = estimate_eta_seconds(elapsed, done, total)
+        job["eta_seconds"] = eta
+        m, s = divmod(elapsed, 60)
+        job["elapsed_display"] = f"{m}:{s:02d}"
+        if eta is not None:
+            em, es = divmod(eta, 60)
+            job["eta_display"] = f"{em}:{es:02d}"
+        else:
+            job["eta_display"] = None
+        phase = job.get("phase", job.get("status", ""))
+        job["phase_label"] = PHASE_LABELS.get(phase, phase.replace("_", " ").title())
 
         response = make_response(render_template("partials/progress_bar.html", job=job))
         if job.get("status") in {"complete", "error"}:

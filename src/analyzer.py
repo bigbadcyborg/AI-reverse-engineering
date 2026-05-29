@@ -26,7 +26,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.progress import ProgressCallback
 
 import httpx
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
@@ -142,7 +145,12 @@ class Analyzer:
             reason=reason,
         )
 
-    def analyze_function(self, function: dict[str, Any]) -> AnalysisResult:
+    def analyze_function(
+        self,
+        function: dict[str, Any],
+        *,
+        on_progress: "ProgressCallback | None" = None,
+    ) -> AnalysisResult:
         """
         Send a single function to the LLM and return a structured AnalysisResult.
 
@@ -151,8 +159,38 @@ class Analyzer:
             httpx.HTTPError   — on network / HTTP errors
             RuntimeError      — if the LLM response cannot be parsed as JSON
         """
+        from src.progress import (
+            PHASE_PARSING,
+            PHASE_PROMPTING,
+            PHASE_WAITING_LLM,
+            ProgressUpdate,
+            format_progress_message,
+        )
+
+        name = function.get("functionName", function.get("entry_point", "unknown"))
+        ep = function.get("entryPoint", function.get("entry_point", ""))
+
+        def _emit(phase: str) -> None:
+            if on_progress:
+                on_progress(
+                    ProgressUpdate(
+                        phase=phase,
+                        current=0,
+                        total=0,
+                        function_name=name,
+                        entry_point=ep,
+                        message=format_progress_message(
+                            phase, name, model=self.model, backend=self.backend
+                        ),
+                        model=self.model,
+                    )
+                )
+
+        _emit(PHASE_PROMPTING)
         prompt = self._render_prompt("summarize.txt", function)
+        _emit(PHASE_WAITING_LLM)
         raw = self._call_llm(prompt)
+        _emit(PHASE_PARSING)
         parsed = self._parse_json(raw)
         return self._build_result(function, parsed, raw)
 

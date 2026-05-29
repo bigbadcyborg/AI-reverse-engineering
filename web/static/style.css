@@ -194,6 +194,54 @@
   font-size: 0.82rem;
 }
 
+.model-badge {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  vertical-align: middle;
+}
+
+.phase-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background: var(--pico-muted-border-color);
+  white-space: nowrap;
+}
+
+.phase-badge.phase-waiting_llm {
+  background: rgba(56, 189, 248, 0.2);
+  color: #7dd3fc;
+}
+
+.current-function {
+  margin: 0.35rem 0 0.2rem;
+  font-size: 0.9rem;
+}
+
+.current-function code {
+  font-weight: 600;
+}
+
+.upload-progress-card.waiting-llm {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.upload-progress-card.waiting-llm .phase-badge.phase-waiting_llm {
+  animation: llm-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes llm-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .llm-error {
   margin-top: 0.6rem;
   border: 1px solid rgba(239, 68, 68, 0.6);
