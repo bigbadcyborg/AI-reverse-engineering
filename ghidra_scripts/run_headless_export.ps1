@@ -1,12 +1,12 @@
 # Runs ExportFunctions.java via analyzeHeadless (Windows).
 #
 # Usage:
-#   $env:GHIDRA_HOME = "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+#   $env:GHIDRA_HOME = "C:\path\to\ghidra_12.1_PUBLIC"
 #   .\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\re_test_target.jsonl
 #
 # Or pass Ghidra path explicitly:
 #   .\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\out.jsonl `
-#       -GhidraHome "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+#       -GhidraHome "C:\path\to\ghidra_12.1_PUBLIC"
 
 param(
     [Parameter(Mandatory = $true, Position = 0)]
@@ -27,7 +27,7 @@ if (-not $env:GHIDRA_HOME) {
 GHIDRA_HOME is not set.
 
 In PowerShell:
-  `$env:GHIDRA_HOME = 'C:\Users\sully\Documents\ghidra_12.1_PUBLIC'
+  `$env:GHIDRA_HOME = 'C:\path\to\ghidra_12.1_PUBLIC'
 
 Then re-run this script, or pass -GhidraHome.
 "@

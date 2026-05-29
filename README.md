@@ -105,7 +105,7 @@ Set `GHIDRA_HOME` to your Ghidra install folder (the directory that contains `su
 **PowerShell** (use `$env:`, not `set` — `set` only works in Command Prompt):
 
 ```powershell
-$env:GHIDRA_HOME = "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+$env:GHIDRA_HOME = "C:\path\to\ghidra_12.1_PUBLIC"
 .\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\re_test_target.jsonl
 ```
 
@@ -113,13 +113,13 @@ Or pass the Ghidra path on one line:
 
 ```powershell
 .\ghidra_scripts\run_headless_export.ps1 re_test_target.exe data\input\re_test_target.jsonl `
-    -GhidraHome "C:\Users\sully\Documents\ghidra_12.1_PUBLIC"
+    -GhidraHome "C:\path\to\ghidra_12.1_PUBLIC"
 ```
 
 **Command Prompt (cmd):**
 
 ```bat
-set GHIDRA_HOME=C:\Users\sully\Documents\ghidra_12.1_PUBLIC
+set GHIDRA_HOME=C:\path\to\ghidra_12.1_PUBLIC
 ghidra_scripts\run_headless_export.bat re_test_target.exe data\input\re_test_target.jsonl
 ```
 
