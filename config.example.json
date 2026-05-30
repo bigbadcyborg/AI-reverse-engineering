@@ -9,7 +9,10 @@
   "analysis": {
     "max_functions_per_run": 0,
     "context_window_chars": 8000,
-    "batch_size": 5
+    "batch_size": 5,
+    "sort_by": "priority",
+    "skip_runtime": false,
+    "priority_min_score": 0
   },
   "output": {
     "report_dir": "reports/",

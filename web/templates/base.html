@@ -35,8 +35,13 @@
     <ul>
       <li><a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">Functions</a></li>
       <li><a href="/approved" class="{% if request.endpoint == 'approved_list' %}active{% endif %}">Approved Renames</a></li>
-      <li><a href="/report" class="outline contrast" role="button" style="padding:0.3rem 0.8rem">Export Report</a></li>
+      <li><a href="/report{% if selected_run_id %}?run={{ selected_run_id }}{% endif %}" class="outline contrast" role="button" style="padding:0.3rem 0.8rem">Export Report</a></li>
     </ul>
+    <div id="run-selector-mount"
+         hx-get="/api/runs"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+    </div>
     <div id="llm-settings-mount"
          hx-get="/api/llm/settings"
          hx-trigger="load"

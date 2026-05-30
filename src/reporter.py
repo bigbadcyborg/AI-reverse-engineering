@@ -22,7 +22,7 @@ from typing import Sequence
 from jinja2 import Environment, FileSystemLoader
 
 from src.analyzer import AnalysisResult
-from src.postprocess import is_high_priority
+from src.postprocess import filter_high_priority
 from src.renamer import is_informative, is_valid_identifier
 
 PROMPT_DIR = Path(__file__).parent.parent / "prompts"
@@ -42,10 +42,11 @@ def _is_actionable_rename(result: AnalysisResult) -> bool:
 def _build_context(
     results: Sequence[AnalysisResult],
     source: str | None,
+    function_map: dict[str, dict] | None = None,
 ) -> dict:
     results = list(results)
 
-    high_priority = [r for r in results if is_high_priority(r)]
+    high_priority = filter_high_priority(results, function_map)
     file_io = [r for r in results if r.category == "file_io"]
     network = [r for r in results if r.category == "network"]
     crypto = [r for r in results if r.category == "crypto"]
@@ -90,6 +91,7 @@ def generate_report(
     results: Sequence[AnalysisResult],
     out_path: str | Path,
     source: str | None = None,
+    function_map: dict[str, dict] | None = None,
 ) -> None:
     """
     Render a structured Markdown report and write it to out_path.
@@ -109,7 +111,7 @@ def generate_report(
         keep_trailing_newline=True,
     )
     template = env.get_template("report.md.j2")
-    context = _build_context(results, source)
+    context = _build_context(results, source, function_map)
     rendered = template.render(**context)
 
     with out_path.open("w", encoding="utf-8") as fh:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 from src.analyzer import AnalysisResult, VALID_CONFIDENCE
 from src.renamer import is_informative, is_valid_identifier, sanitize_identifier
@@ -82,7 +82,7 @@ NETWORK_SIGNALS = (
     "bind", "listen", "accept", "gethostbyname",
 )
 FILE_IO_SIGNALS = (
-    "fopen", "fread", "fwrite", "fclose", "createfile", "open", "read", "write",
+    "fopen", "fread", "fwrite", "fclose", "createfile", "readfile", "writefile",
 )
 CRYPTO_SIGNALS = ("crypt", "bcrypt", "xor", "encrypt", "decrypt", "hash")
 PROCESS_SIGNALS = ("createprocess", "shellexecute", "system", "winexec", "spawn")
@@ -93,6 +93,11 @@ HIGH_PRIORITY_PROCESS_ALLOWLIST = re.compile(
 )
 
 HIGH_PRIORITY_CATEGORIES = frozenset({"crypto", "network", "registry"})
+
+NETWORK_PRIMARY_NAMES = re.compile(
+    r"(send_beacon|recv_command|connect_to_host)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -154,15 +159,44 @@ def _count_signals(blob: str, signals: tuple[str, ...]) -> int:
     return sum(1 for s in signals if s in blob)
 
 
+def _callee_blob(callees: list[str]) -> str:
+    return " ".join(c.lower() for c in callees)
+
+
+def _has_network_callees(callees: list[str]) -> bool:
+    blob = _callee_blob(callees)
+    return any(s in blob for s in ("send", "recv", "connect", "socket", "bind", "listen", "accept"))
+
+
 def infer_category_from_signals(
-    blob: str, current: str, *, strong_only: bool = True
+    blob: str,
+    current: str,
+    *,
+    strong_only: bool = True,
+    callees: list[str] | None = None,
+    function_name: str = "",
 ) -> str | None:
+    callees = callees or []
+    callee_blob = _callee_blob(callees)
+
+    if NETWORK_PRIMARY_NAMES.search(function_name):
+        if current != "network":
+            return "network"
+
+    if _has_network_callees(callees):
+        net_in_callees = sum(1 for s in NETWORK_SIGNALS if s in callee_blob)
+        fio_in_callees = sum(1 for s in FILE_IO_SIGNALS if s in callee_blob)
+        if net_in_callees > 0 and net_in_callees >= fio_in_callees and current != "network":
+            return "network"
+
     scores = {
         "network": _count_signals(blob, NETWORK_SIGNALS),
         "file_io": _count_signals(blob, FILE_IO_SIGNALS),
         "crypto": _count_signals(blob, CRYPTO_SIGNALS),
         "process": _count_signals(blob, PROCESS_SIGNALS),
     }
+    if _has_network_callees(callees) and scores["network"] >= scores["file_io"]:
+        scores["file_io"] = max(0, scores["file_io"] - 1)
     best_cat = max(scores, key=lambda k: scores[k])
     best_score = scores[best_cat]
     if best_score == 0:
@@ -303,17 +337,41 @@ def calibrate_confidence(
     return conf
 
 
-def is_high_priority(result: AnalysisResult) -> bool:
+def is_high_priority(
+    result: AnalysisResult,
+    *,
+    callees: list[str] | None = None,
+) -> bool:
+    callees = callees or []
+    if result.confidence == "low":
+        return False
+    if is_runtime_function(result.function_name, callees):
+        return False
     if result.category == "runtime":
+        return False
+    name = (result.suggested_name or result.function_name or "").strip()
+    if name and not is_valid_identifier(name):
         return False
     if result.category in HIGH_PRIORITY_CATEGORIES:
         return True
     if result.category == "process":
         combined = f"{result.function_name} {result.summary}"
         return bool(HIGH_PRIORITY_PROCESS_ALLOWLIST.search(combined))
-    if is_runtime_function(result.function_name, []):
-        return False
     return False
+
+
+def filter_high_priority(
+    results: Sequence[AnalysisResult],
+    function_map: dict[str, dict[str, Any]] | None = None,
+) -> list[AnalysisResult]:
+    """Hardened high-priority list for reports and exports."""
+    out: list[AnalysisResult] = []
+    for r in results:
+        fn = (function_map or {}).get(r.entry_point, {})
+        callees = fn.get("callees") or fn.get("calledFunctions") or []
+        if is_high_priority(r, callees=list(callees)):
+            out.append(r)
+    return out
 
 
 def refine(
@@ -329,10 +387,15 @@ def refine(
     result.side_effects = filter_side_effects(list(result.side_effects), evidence)
 
     runtime = is_runtime_function(result.function_name, callees)
-    if runtime and result.category in ("process", "unknown"):
+    if runtime:
         result.category = "runtime"
 
-    inferred = infer_category_from_signals(evidence, result.category)
+    inferred = infer_category_from_signals(
+        evidence,
+        result.category,
+        callees=callees,
+        function_name=result.function_name,
+    )
     if inferred:
         result.category = inferred
 

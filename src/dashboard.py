@@ -22,6 +22,7 @@ All data stays on-device. No external requests are made by the server.
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    session,
     url_for,
 )
 
@@ -112,6 +114,41 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
             "error": error,
         }
 
+    def _selected_run_id() -> str | None:
+        from src import db
+
+        if not _db_exists():
+            return None
+        run_param = request.args.get("run", "").strip()
+        if run_param:
+            return db.resolve_run_id(db_path, run_param)
+        session_run = session.get("run_id", "").strip()
+        if session_run:
+            resolved = db.resolve_run_id(db_path, session_run)
+            if resolved:
+                return resolved
+        return db.resolve_run_id(db_path, None)
+
+    def _runs_context() -> dict[str, Any]:
+        from src import db
+
+        if not _db_exists():
+            return {"runs": [], "selected_run_id": None, "selected_run": None}
+        db.init_db(db_path)
+        runs = db.list_runs(db_path)
+        selected = _selected_run_id()
+        selected_run = db.get_run(db_path, selected) if selected else None
+        return {
+            "runs": runs,
+            "selected_run_id": selected,
+            "selected_run": selected_run,
+        }
+
+    def _run_query_suffix(run_id: str | None) -> str:
+        if run_id:
+            return f"run={run_id}"
+        return ""
+
     def _db_exists() -> bool:
         return db_path.exists()
 
@@ -166,7 +203,9 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
     def _run_analysis_job(job_id: str, jsonl_path: Path) -> None:
         from src import batch, db, importer
         from src.analyzer import Analyzer
+        from src.prioritizer import prioritize
         from src.progress import PHASE_INGESTING, ProgressUpdate
+        from src.versions import POSTPROCESS_VERSION, prompt_version_for
 
         try:
             llm_cfg = _get_llm_config()
@@ -184,6 +223,7 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
                 started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
             functions = list(importer.load(str(jsonl_path)))
+            functions = prioritize(functions, runtime_config)
             total = len(functions)
             if total == 0:
                 _update_job(
@@ -195,6 +235,17 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
                 )
                 return
 
+            db.init_db(db_path)
+            run_id = db.create_run(
+                db_path,
+                label=f"Import {jsonl_path.name}",
+                model=model_name,
+                backend=backend_name,
+                prompt_version=prompt_version_for("summarize.txt"),
+                postprocess_version=POSTPROCESS_VERSION,
+                source_input=str(jsonl_path),
+            )
+
             _update_job(
                 job_id,
                 status="running",
@@ -203,6 +254,7 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
                 total=total,
                 done=0,
                 errors=0,
+                run_id=run_id,
             )
 
             def on_progress(update: ProgressUpdate) -> None:
@@ -226,6 +278,7 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
             results, errors, decompiled_code_map = batch.run_batch_analysis(
                 functions,
                 analyzer,
+                run_id=run_id,
                 on_progress=on_progress,
             )
 
@@ -244,12 +297,18 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
                 phase=PHASE_INGESTING,
                 message="Loading results into database...",
             )
-            db.init_db(db_path)
             inserted, updated = db.ingest_results(
                 results,
                 db_path,
                 source_file=jsonl_path.name,
                 decompiled_code_map=decompiled_code_map,
+                run_id=run_id,
+            )
+            db.complete_run(
+                db_path,
+                run_id,
+                function_count=len(results),
+                error_count=errors,
             )
 
             _update_job(
@@ -259,10 +318,12 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
                 done=total,
                 message=(
                     f"Import complete: {len(results)} analyzed, "
-                    f"{inserted} inserted, {updated} updated, {errors} errors."
+                    f"{inserted} inserted, {updated} updated, {errors} errors. "
+                    f"Run {run_id[:8]}…"
                 ),
                 inserted=inserted,
                 updated=updated,
+                run_id=run_id,
             )
         except Exception as exc:
             _update_job(
@@ -283,7 +344,12 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
 
         from src import db
 
-        stats = db.get_stats(db_path)
+        run_param = request.args.get("run", "").strip()
+        if run_param and db.resolve_run_id(db_path, run_param):
+            session["run_id"] = run_param
+
+        run_id = _selected_run_id()
+        stats = db.get_stats(db_path, run_id=run_id)
         q        = request.args.get("q", "").strip()
         category = request.args.get("category", "").strip()
         confidence = request.args.get("confidence", "").strip()
@@ -294,8 +360,10 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
             query=q or None,
             category=category or None,
             confidence=confidence or None,
+            run_id=run_id,
             limit=limit,
         )
+        runs_ctx = _runs_context()
 
         return render_template(
             "index.html",
@@ -306,6 +374,7 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
             confidence=confidence,
             limit=limit,
             upload_job=None,
+            **runs_ctx,
         )
 
     @app.route("/api/search")
@@ -320,16 +389,23 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
         category   = request.args.get("category", "").strip()
         confidence = request.args.get("confidence", "").strip()
         limit      = int(request.args.get("limit", 50))
+        run_id     = request.args.get("run", "").strip() or _selected_run_id()
 
         functions = db.search(
             db_path,
             query=q or None,
             category=category or None,
             confidence=confidence or None,
+            run_id=run_id,
             limit=limit,
         )
 
-        return render_template("partials/function_list.html", functions=functions, limit=limit)
+        return render_template(
+            "partials/function_list.html",
+            functions=functions,
+            limit=limit,
+            selected_run_id=run_id,
+        )
 
     @app.route("/api/upload", methods=["POST"])
     def api_upload():
@@ -417,7 +493,12 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
 
         response = make_response(render_template("partials/progress_bar.html", job=job))
         if job.get("status") in {"complete", "error"}:
-            response.headers["HX-Trigger"] = "jobComplete"
+            if job.get("status") == "complete" and job.get("run_id"):
+                response.headers["HX-Trigger"] = json.dumps(
+                    {"jobComplete": {"run_id": job["run_id"]}}
+                )
+            else:
+                response.headers["HX-Trigger"] = "jobComplete"
         return response
 
     @app.route("/api/llm/settings", methods=["GET"])
@@ -469,6 +550,17 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
         ctx = _llm_settings_context(refresh_models=True, message=msg)
         return render_template("partials/llm_settings.html", **ctx)
 
+    @app.route("/api/runs", methods=["GET"])
+    def api_runs_get():
+        return render_template("partials/run_selector.html", **_runs_context())
+
+    @app.route("/api/runs", methods=["POST"])
+    def api_runs_post():
+        run_id = (request.form.get("run_id") or "").strip()
+        if run_id:
+            session["run_id"] = run_id
+        return redirect(request.referrer or url_for("index", run=run_id))
+
     @app.route("/function/<path:entry_point>")
     def function_detail(entry_point: str):
         if not _db_exists():
@@ -476,10 +568,11 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
 
         from src import db
 
-        fn = db.get_function(db_path, entry_point)
+        run_id = _selected_run_id()
+        fn = db.get_function(db_path, entry_point, run_id=run_id)
         if fn is None:
             flash(f"Function {entry_point!r} not found in database.", "error")
-            return redirect(url_for("index"))
+            return redirect(url_for("index", run=run_id or None))
 
         approvals = _load_approvals()
         approval_status = None
@@ -488,10 +581,12 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
         elif fn.get("suggested_name") and fn["suggested_name"] != fn["function_name"]:
             approval_status = "pending"
 
+        runs_ctx = _runs_context()
         return render_template(
             "function.html",
             fn=fn,
             approval_status=approval_status,
+            **runs_ctx,
         )
 
     @app.route("/api/approve", methods=["POST"])
@@ -505,7 +600,7 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
 
         from src import db
 
-        fn = db.get_function(db_path, entry_point)
+        fn = db.get_function(db_path, entry_point, run_id=_selected_run_id())
         if fn is None:
             return "<span>Function not found</span>", 404
 
@@ -518,6 +613,82 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
             approval_status=approval_status,
         )
 
+    @app.route("/api/reanalyze", methods=["POST"])
+    def api_reanalyze():
+        from src import db, importer
+        from src.analyzer import Analyzer, AnalysisResult
+
+        entry_point = (request.form.get("entry_point") or "").strip()
+        focus_note = (request.form.get("focus") or "").strip()
+        if not entry_point or not _db_exists():
+            return "<span class=\"flash-error\">Invalid re-analyze request.</span>", 400
+
+        run_id = _selected_run_id()
+        if not run_id:
+            return "<span class=\"flash-error\">No analysis run selected.</span>", 400
+
+        fn_row = db.get_function(db_path, entry_point, run_id=run_id)
+        if fn_row is None:
+            return "<span>Function not found</span>", 404
+
+        source_path = None
+        for src in (fn_row.get("source_file") or "",):
+            if not src:
+                continue
+            candidate = uploads_dir / src
+            if candidate.is_file():
+                source_path = candidate
+                break
+            for up in uploads_dir.glob(f"*_{src}"):
+                source_path = up
+                break
+
+        function: dict[str, Any] = {
+            "functionName": fn_row.get("function_name", ""),
+            "entryPoint": fn_row.get("entry_point", entry_point),
+            "decompiledCode": fn_row.get("decompiled_code", ""),
+        }
+        if source_path and source_path.is_file():
+            for raw in importer.load(str(source_path)):
+                if raw.get("entryPoint") == entry_point:
+                    function = raw
+                    break
+
+        analyzer = Analyzer(_get_llm_config())
+        if not analyzer.ping():
+            return "<span class=\"flash-error\">LLM backend unreachable.</span>", 503
+
+        prior = AnalysisResult(
+            function_name=fn_row["function_name"],
+            entry_point=fn_row["entry_point"],
+            summary=fn_row["summary"],
+            suggested_name=fn_row["suggested_name"],
+            category=fn_row["category"],
+            confidence=fn_row["confidence"],
+            side_effects=fn_row["side_effects"],
+            uncertainties=fn_row["uncertainties"],
+        )
+        result = analyzer.reanalyze_function(
+            function,
+            focus_note=focus_note,
+            prior_result=prior,
+            run_id=run_id,
+        )
+        code = function.get("decompiledCode", "") or fn_row.get("decompiled_code", "")
+        dmap = {result.entry_point: code} if code else None
+        db.ingest_results(
+            [result],
+            db_path,
+            source_file=fn_row.get("source_file", ""),
+            decompiled_code_map=dmap,
+            run_id=run_id,
+        )
+        fn_updated = db.get_function(db_path, entry_point, run_id=run_id) or fn_row
+        return render_template(
+            "partials/analysis_summary.html",
+            fn=fn_updated,
+        )
+
     @app.route("/report")
     def export_report():
         """Generate a Markdown report from all DB contents and serve it."""
@@ -527,7 +698,8 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
 
         from src import db, reporter
 
-        results = db.all_results_as_analysis(db_path)
+        run_id = _selected_run_id()
+        results = db.all_results_as_analysis(db_path, run_id=run_id)
         if not results:
             flash("No analysis results in database.", "error")
             return redirect(url_for("index"))
@@ -535,7 +707,11 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
         report_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         out_path = report_dir / f"dashboard_export_{ts}.md"
-        reporter.generate_report(results, str(out_path), source="dashboard export")
+        run_meta = db.get_run(db_path, run_id) if run_id else None
+        source_label = "dashboard export"
+        if run_meta:
+            source_label = f"dashboard export ({run_meta.get('model', '')} {run_id[:8]})"
+        reporter.generate_report(results, str(out_path), source=source_label)
 
         # Offer the file as a download
         return send_file(
@@ -558,6 +734,16 @@ def create_app(config: dict, *, config_path: Path | None = None) -> Flask:
     # ------------------------------------------------------------------
     # Template filters
     # ------------------------------------------------------------------
+
+    @app.context_processor
+    def inject_run_context():
+        if not _db_exists():
+            return {"selected_run_id": None, "runs": []}
+        try:
+            ctx = _runs_context()
+            return ctx
+        except Exception:
+            return {"selected_run_id": None, "runs": []}
 
     @app.template_filter("short_addr")
     def short_addr(addr: str) -> str:

@@ -1,0 +1,16 @@
+{% if runs %}
+<form class="run-selector" method="post" action="/api/runs">
+  <label for="run-select" class="muted">Analysis run</label>
+  <select id="run-select" name="run_id" onchange="this.form.submit()">
+    {% for run in runs %}
+    <option value="{{ run.run_id }}" {% if run.run_id == selected_run_id %}selected{% endif %}>
+      {{ run.label or run.run_id[:8] }}
+      {% if run.model %} — {{ run.model }}{% endif %}
+      ({{ run.function_count }})
+    </option>
+    {% endfor %}
+  </select>
+</form>
+{% elif selected_run_id %}
+<span class="muted">Run: {{ selected_run_id[:8] }}…</span>
+{% endif %}

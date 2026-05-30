@@ -157,6 +157,25 @@
   font-size: 0.8rem;
 }
 
+.run-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-left: 1rem;
+  min-width: 12rem;
+}
+
+.run-selector label {
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.run-selector select {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.4rem;
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   #llm-settings-mount {
     width: 100%;

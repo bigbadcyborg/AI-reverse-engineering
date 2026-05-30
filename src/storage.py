@@ -17,6 +17,14 @@ from typing import Iterator, Sequence
 
 from src.analyzer import AnalysisResult
 
+_RESULT_FIELDS = {f.name for f in dataclasses.fields(AnalysisResult)}
+
+
+def _result_from_dict(entry: dict) -> AnalysisResult:
+    """Build AnalysisResult ignoring unknown JSON keys (backward compatible)."""
+    filtered = {k: v for k, v in entry.items() if k in _RESULT_FIELDS}
+    return AnalysisResult(**filtered)
+
 
 # ------------------------------------------------------------------
 # JSON (array) format — backward-compatible
@@ -68,7 +76,7 @@ def load_results_jsonl(path: str | Path) -> list[AnalysisResult]:
                 raise ValueError(
                     f"{path}:{lineno}: invalid JSON line — {exc}"
                 ) from exc
-            results.append(AnalysisResult(**entry))
+            results.append(_result_from_dict(entry))
     return results
 
 
@@ -86,7 +94,7 @@ def load_results(path: str | Path) -> list[AnalysisResult]:
         return load_results_jsonl(path)
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
-    return [AnalysisResult(**entry) for entry in data]
+    return [_result_from_dict(entry) for entry in data]
 
 
 # ------------------------------------------------------------------

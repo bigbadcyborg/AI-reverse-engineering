@@ -22,6 +22,7 @@ def run_batch_analysis(
     functions: Sequence[dict[str, Any]],
     analyzer: Analyzer,
     *,
+    run_id: str = "",
     on_progress: ProgressCallback | None = None,
     on_success: Callable[[AnalysisResult], None] | None = None,
     on_error: Callable[[dict[str, Any], Exception], None] | None = None,
@@ -80,7 +81,10 @@ def run_batch_analysis(
 
         try:
             result = analyzer.analyze_function(
-                fn, on_progress=_progress_cb, batch_context=batch_context
+                fn,
+                on_progress=_progress_cb,
+                batch_context=batch_context,
+                run_id=run_id,
             )
             results.append(result)
             if on_success:

@@ -106,7 +106,12 @@
     uploadFile(file);
   });
 
-  document.body.addEventListener("jobComplete", () => {
+  document.body.addEventListener("jobComplete", (e) => {
+    const runId = e.detail && e.detail.run_id;
+    if (runId) {
+      window.location.href = "/?run=" + encodeURIComponent(runId);
+      return;
+    }
     const list = document.getElementById("function-list");
     if (list && window.htmx) {
       window.htmx.ajax("GET", "/api/search", {

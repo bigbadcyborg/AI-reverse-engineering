@@ -12,6 +12,7 @@ Commands:
     approve-renames Create an approved renames file from suggestions for Ghidra import
     ingest         Load analysis results into the SQLite search database
     search         Search and filter analyzed functions in the database
+    reanalyze      Re-analyze one function with optional analyst focus
     dashboard      Start the local web dashboard
     ping           Check connectivity to the configured local LLM backend
 """
@@ -22,6 +23,7 @@ import argparse
 import json
 import logging
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -109,9 +111,11 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     per successfully analyzed function. If a function fails, the error is
     logged to the error log and analysis continues with the next function.
     """
-    from src import batch, importer, storage
+    from src import batch, db, importer, storage
     from src.analyzer import Analyzer
+    from src.prioritizer import prioritize
     from src.progress import PHASE_LABELS, ProgressUpdate
+    from src.versions import POSTPROCESS_VERSION, prompt_version_for
 
     config = _load_config(args.config)
     _setup_logging(config)
@@ -120,6 +124,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     analyzer = Analyzer(config["llm"])
     out_path = Path(args.output)
     error_log_path = Path(args.error_log) if args.error_log else _default_error_log(out_path)
+    run_id = uuid.uuid4().hex
 
     # Connectivity check first
     console.print("Checking LLM backend connectivity ...")
@@ -139,17 +144,23 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         console.print(f"[red]Failed to load input:[/red] {exc}")
         sys.exit(1)
 
-    # Apply optional --limit (0 = unlimited, overrides config)
+    # Prioritize then apply optional --limit (top N by score when sort_by=priority)
+    functions = prioritize(
+        functions,
+        config,
+        skip_runtime=args.skip_runtime,
+    )
     max_fn = args.limit if args.limit is not None else config.get("analysis", {}).get("max_functions_per_run", 0)
     if max_fn and max_fn > 0 and len(functions) > max_fn:
         console.print(
-            f"[yellow]Limiting to first {max_fn} of {len(functions)} functions "
+            f"[yellow]Limiting to top {max_fn} of {len(functions)} functions by priority "
             f"(--limit / max_functions_per_run).[/yellow]"
         )
         functions = functions[:max_fn]
 
     total = len(functions)
-    console.print(f"Loaded [bold]{total}[/bold] function(s). Writing output to [cyan]{out_path}[/cyan]\n")
+    console.print(f"Loaded [bold]{total}[/bold] function(s). Writing output to [cyan]{out_path}[/cyan]")
+    console.print(f"Run ID: [dim]{run_id}[/dim]\n")
 
     # Initialize fresh output file
     storage.init_jsonl(out_path)
@@ -202,6 +213,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         _, error_count, _ = batch.run_batch_analysis(
             functions,
             analyzer,
+            run_id=run_id,
             on_progress=on_progress,
             on_success=on_success,
             on_error=on_error,
@@ -225,6 +237,43 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         console.print(f"Error details: [cyan]{error_log_path}[/cyan]")
 
     console.print(f"Results: [cyan]{out_path}[/cyan]")
+
+    if args.ingest:
+        db_path = Path(args.db or config.get("output", {}).get("db_path", "data/output/analysis.db"))
+        db.init_db(db_path)
+        db.create_run(
+            db_path,
+            run_id=run_id,
+            label=f"CLI analyze {Path(args.input).name}",
+            model=analyzer.model,
+            backend=analyzer.backend,
+            prompt_version=prompt_version_for("summarize.txt"),
+            postprocess_version=POSTPROCESS_VERSION,
+            source_input=str(args.input),
+        )
+        results = storage.load_results_jsonl(out_path)
+        decompiled_code_map = {
+            fn.get("entryPoint", ""): fn.get("decompiledCode", "")
+            for fn in functions
+            if fn.get("entryPoint") and fn.get("decompiledCode")
+        }
+        db.complete_run(
+            db_path,
+            run_id,
+            function_count=success_count,
+            error_count=error_count,
+        )
+        inserted, updated = db.ingest_results(
+            results,
+            db_path,
+            source_file=out_path.name,
+            decompiled_code_map=decompiled_code_map,
+            run_id=run_id,
+        )
+        console.print(
+            f"[green]Ingested into[/green] [cyan]{db_path}[/cyan] "
+            f"({inserted} inserted, {updated} updated)."
+        )
 
     if success_count == 0:
         sys.exit(1)
@@ -438,19 +487,52 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     db.init_db(db_path)
 
     source_label = Path(input_path).name
+    run_id = args.run_id or None
+    if not run_id and results and results[0].run_id:
+        run_id = results[0].run_id
+
+    if not run_id:
+        run_id = db.ensure_run_for_ingest(
+            db_path,
+            results,
+            source_file=source_label,
+            label=f"Ingest {source_label}",
+        )
+        db.complete_run(
+            db_path,
+            run_id,
+            function_count=len(results),
+            error_count=0,
+        )
+    elif not db.get_run(db_path, run_id):
+        first = results[0]
+        from src.versions import POSTPROCESS_VERSION, prompt_version_for
+
+        db.create_run(
+            db_path,
+            run_id=run_id,
+            label=f"Ingest {source_label}",
+            model=first.model,
+            backend=first.backend,
+            prompt_version=first.prompt_version or prompt_version_for("summarize.txt"),
+            postprocess_version=first.postprocess_version or POSTPROCESS_VERSION,
+            source_input=source_label,
+        )
+
     inserted, updated = db.ingest_results(
         results, db_path,
         source_file=source_label,
         decompiled_code_map=decompiled_code_map or None,
+        run_id=run_id,
     )
 
     console.print(
         f"[green]Ingest complete.[/green] "
         f"[bold]{inserted}[/bold] inserted, [bold]{updated}[/bold] updated "
-        f"({len(results)} total)."
+        f"({len(results)} total). Run: [cyan]{run_id}[/cyan]"
     )
 
-    stats = db.get_stats(db_path)
+    stats = db.get_stats(db_path, run_id=run_id)
     console.print(
         f"Database total: [bold]{stats['total']}[/bold] functions across "
         f"[bold]{len(stats['by_category'])}[/bold] categories."
@@ -530,8 +612,11 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     # ---- Stats mode -----------------------------------------------------------
     if args.stats:
-        stats = db.get_stats(db_path)
+        run_id = db.resolve_run_id(db_path, args.run_id)
+        stats = db.get_stats(db_path, run_id=run_id)
         console.print(f"\n[bold]Database:[/bold] {db_path}")
+        if run_id:
+            console.print(f"[bold]Run:[/bold] {run_id}")
         console.print(f"[bold]Total functions:[/bold] {stats['total']}\n")
 
         cat_table = Table(title="By Category", show_header=True, min_width=40)
@@ -568,6 +653,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         query=args.query or None,
         category=args.category or None,
         confidence=args.confidence or None,
+        run_id=args.run_id,
         limit=args.limit,
     )
 
@@ -698,7 +784,121 @@ def cmd_approve_renames(args: argparse.Namespace) -> None:
         "  2. Set [bold]approved[/bold] = true/false for each entry.\n"
         "  3. Optionally add a [bold]comment[/bold] field (plate comment in Ghidra).\n"
         "  4. Run [bold]ImportApprovedRenames.java[/bold] inside Ghidra."
+        )
+
+
+def cmd_reanalyze(args: argparse.Namespace) -> None:
+    """Re-analyze a single function with optional analyst focus."""
+    from src import db, importer, storage
+    from src.analyzer import Analyzer
+    from src.versions import POSTPROCESS_VERSION, prompt_version_for
+
+    config = _load_config(args.config)
+    _setup_logging(config)
+
+    analyzer = Analyzer(config["llm"])
+    if not analyzer.ping():
+        console.print("[red]Cannot reach LLM backend.[/red]")
+        sys.exit(1)
+
+    functions = list(importer.load(args.source))
+    target = None
+    for fn in functions:
+        ep = fn.get("entryPoint", fn.get("entry_point", ""))
+        if ep == args.entry_point or fn.get("functionName") == args.entry_point:
+            target = fn
+            break
+    if target is None:
+        console.print(f"[red]Function not found in source:[/red] {args.entry_point}")
+        sys.exit(1)
+
+    db_path = Path(args.db or config.get("output", {}).get("db_path", "data/output/analysis.db"))
+    prior = None
+    run_id = args.run_id or ""
+    if db_path.exists():
+        db.init_db(db_path)
+        if not run_id:
+            run_id = db.resolve_run_id(db_path, None) or uuid.uuid4().hex
+        prior_row = db.get_function(db_path, target.get("entryPoint", ""), run_id=run_id)
+        if prior_row:
+            from src.analyzer import AnalysisResult
+
+            prior = AnalysisResult(
+                function_name=prior_row["function_name"],
+                entry_point=prior_row["entry_point"],
+                summary=prior_row["summary"],
+                suggested_name=prior_row["suggested_name"],
+                category=prior_row["category"],
+                confidence=prior_row["confidence"],
+                side_effects=prior_row["side_effects"],
+                uncertainties=prior_row["uncertainties"],
+            )
+    else:
+        run_id = run_id or uuid.uuid4().hex
+
+    if args.new_run or not db_path.exists():
+        db.init_db(db_path)
+        run_id = uuid.uuid4().hex
+        db.create_run(
+            db_path,
+            run_id=run_id,
+            label=f"Re-analyze {target.get('functionName', args.entry_point)}",
+            model=analyzer.model,
+            backend=analyzer.backend,
+            prompt_version=prompt_version_for("summarize_focus.txt"),
+            postprocess_version=POSTPROCESS_VERSION,
+            source_input=str(args.source),
+        )
+
+    console.print(
+        f"Re-analyzing [cyan]{target.get('functionName')}[/cyan] "
+        f"({target.get('entryPoint')}) ..."
     )
+    result = analyzer.reanalyze_function(
+        target,
+        focus_note=args.focus or "",
+        prior_result=prior,
+        run_id=run_id,
+    )
+
+    if args.output:
+        out_path = Path(args.output)
+        storage.init_jsonl(out_path)
+        storage.append_result_jsonl(result, out_path)
+        console.print(f"Wrote [cyan]{out_path}[/cyan]")
+
+    if args.ingest or not args.output:
+        db.init_db(db_path)
+        if not db.get_run(db_path, run_id):
+            db.create_run(
+                db_path,
+                run_id=run_id,
+                label=f"Re-analyze {result.function_name}",
+                model=analyzer.model,
+                backend=analyzer.backend,
+                prompt_version=result.prompt_version,
+                postprocess_version=result.postprocess_version,
+                source_input=str(args.source),
+            )
+        code = target.get("decompiledCode", "") or target.get("decompiled_code", "")
+        dmap = {result.entry_point: code} if code else None
+        db.ingest_results(
+            [result],
+            db_path,
+            source_file=Path(args.source).name,
+            decompiled_code_map=dmap,
+            run_id=run_id,
+        )
+        db.complete_run(db_path, run_id, function_count=1, error_count=0)
+        console.print(
+            f"[green]Updated[/green] run [cyan]{run_id}[/cyan] in [cyan]{db_path}[/cyan]"
+        )
+
+    console.print(
+        f"Category: [bold]{result.category}[/bold] | "
+        f"Confidence: [bold]{result.confidence}[/bold]"
+    )
+    console.print(result.summary)
 
 
 # ------------------------------------------------------------------
@@ -743,6 +943,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--error-log", metavar="PATH", default=None,
         help="Path to write per-function error records (JSONL). "
              "Defaults to <output-stem>_errors.jsonl",
+    )
+    p_analyze.add_argument(
+        "--skip-runtime", action="store_true",
+        help="Skip CRT/runtime helpers when prioritizing functions",
+    )
+    p_analyze.add_argument(
+        "--ingest", action="store_true",
+        help="After analysis, ingest results into SQLite (uses run_id in JSONL)",
+    )
+    p_analyze.add_argument(
+        "--db", metavar="PATH", default=None,
+        help="SQLite path when using --ingest (default: output.db_path from config)",
     )
     p_analyze.set_defaults(func=cmd_analyze)
 
@@ -854,7 +1066,50 @@ def build_parser() -> argparse.ArgumentParser:
         "--db", metavar="PATH", default=None,
         help="Path to the SQLite database (default: output.db_path from config.json)",
     )
+    p_ingest.add_argument(
+        "--run-id", metavar="ID", default=None, dest="run_id",
+        help="Analysis run ID (default: from JSONL provenance or new run)",
+    )
     p_ingest.set_defaults(func=cmd_ingest)
+
+    # reanalyze
+    p_reanalyze = sub.add_parser(
+        "reanalyze",
+        help="Re-analyze one function with optional analyst focus",
+    )
+    p_reanalyze.add_argument(
+        "--entry-point", required=True, metavar="ADDR",
+        help="Function entry point address (or function name match)",
+    )
+    p_reanalyze.add_argument(
+        "--source", required=True, metavar="PATH",
+        help="Source functions JSON/JSONL (decompiled code)",
+    )
+    p_reanalyze.add_argument(
+        "--focus", metavar="TEXT", default="",
+        help="Analyst guidance for the LLM (e.g. classify as network)",
+    )
+    p_reanalyze.add_argument(
+        "--output", metavar="PATH", default=None,
+        help="Optional JSONL path to write the single result",
+    )
+    p_reanalyze.add_argument(
+        "--db", metavar="PATH", default=None,
+        help="SQLite database to update (default: output.db_path)",
+    )
+    p_reanalyze.add_argument(
+        "--run-id", metavar="ID", default=None, dest="run_id",
+        help="Run to update (default: latest run in database)",
+    )
+    p_reanalyze.add_argument(
+        "--new-run", action="store_true",
+        help="Create a new analysis run instead of updating the current one",
+    )
+    p_reanalyze.add_argument(
+        "--ingest", action="store_true",
+        help="Write result to SQLite (default when --output is omitted)",
+    )
+    p_reanalyze.set_defaults(func=cmd_reanalyze)
 
     # dashboard
     p_dash = sub.add_parser(
@@ -911,6 +1166,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument(
         "--stats", action="store_true",
         help="Show database statistics instead of search results",
+    )
+    p_search.add_argument(
+        "--run-id", metavar="ID", default=None, dest="run_id",
+        help="Limit search/stats to a specific analysis run",
     )
     p_search.add_argument(
         "--db", metavar="PATH", default=None,

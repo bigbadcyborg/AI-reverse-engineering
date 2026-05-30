@@ -114,6 +114,35 @@ def test_execute_command_is_high_priority_process():
     assert is_high_priority(out)
 
 
+def test_dyn_tls_crypto_becomes_runtime_not_high_priority():
+    r = _result(
+        function_name="__dyn_tls_init",
+        category="crypto",
+        confidence="medium",
+        suggested_name="__dyn_tls_init",
+    )
+    fn = _fn(code="tls init;\n" * 5)
+    out = refine(r, fn)
+    assert out.category == "runtime"
+    assert not is_high_priority(out)
+
+
+def test_invalid_suggested_name_excluded_from_high_priority():
+    r = _result(
+        category="crypto",
+        suggested_name="Hash Function",
+        confidence="high",
+    )
+    assert not is_high_priority(r)
+
+
+def test_send_beacon_network_primary():
+    r = _result(function_name="send_beacon", category="crypto", confidence="high")
+    fn = _fn(callees=["send", "xor_crypt"], code="send();\n" * 10)
+    out = refine(r, fn)
+    assert out.category == "network"
+
+
 def test_infer_network_single_strong_signal():
     blob = "socket connect send"
     assert infer_category_from_signals(blob, "file_io") == "network"

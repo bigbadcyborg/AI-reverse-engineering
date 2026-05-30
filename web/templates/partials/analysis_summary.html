@@ -1,0 +1,38 @@
+<div id="analysis-panel" class="analysis-panel">
+  <div class="analysis-card">
+    <h4>Summary</h4>
+    <p>{{ fn.summary or "No summary available." }}</p>
+  </div>
+
+  {% if fn.side_effects %}
+  <div class="analysis-card">
+    <h4>Side Effects</h4>
+    <ul class="detail-list">
+      {% for effect in fn.side_effects %}
+      <li>{{ effect }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if fn.uncertainties %}
+  <div class="analysis-card warning-card">
+    <h4>Uncertainties</h4>
+    <ul class="detail-list">
+      {% for u in fn.uncertainties %}
+      <li>{{ u }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="analysis-card">
+    <h4>Classification</h4>
+    <p>
+      {% if fn.category %}
+        <span class="badge cat-badge cat-{{ fn.category }}">{{ fn.category }}</span>
+      {% endif %}
+      <span class="badge conf-badge conf-{{ fn.confidence }}">{{ fn.confidence }} confidence</span>
+    </p>
+  </div>
+</div>

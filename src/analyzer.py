@@ -58,6 +58,12 @@ class AnalysisResult:
     side_effects: list[str] = field(default_factory=list)
     uncertainties: list[str] = field(default_factory=list)
     raw_response: str = ""
+    analyzed_at: str = ""
+    model: str = ""
+    backend: str = ""
+    prompt_version: str = ""
+    postprocess_version: str = ""
+    run_id: str = ""
 
 
 class Analyzer:
@@ -168,6 +174,8 @@ class Analyzer:
         *,
         on_progress: "ProgressCallback | None" = None,
         batch_context: "BatchContext | None" = None,
+        run_id: str = "",
+        prompt_template: str = "summarize.txt",
     ) -> AnalysisResult:
         """
         Send a single function to the LLM and return a structured AnalysisResult.
@@ -205,12 +213,44 @@ class Analyzer:
                 )
 
         _emit(PHASE_PROMPTING)
-        prompt = self._render_prompt("summarize.txt", function)
+        prompt = self._render_prompt(prompt_template, function)
         _emit(PHASE_WAITING_LLM)
         raw = self._call_llm(prompt)
         _emit(PHASE_PARSING)
         parsed = self._parse_json(raw)
-        return self._build_result(function, parsed, raw, batch_context)
+        return self._build_result(
+            function,
+            parsed,
+            raw,
+            batch_context,
+            run_id=run_id,
+            prompt_template=prompt_template,
+        )
+
+    def reanalyze_function(
+        self,
+        function: dict[str, Any],
+        *,
+        focus_note: str = "",
+        prior_result: AnalysisResult | None = None,
+        on_progress: "ProgressCallback | None" = None,
+        batch_context: "BatchContext | None" = None,
+        run_id: str = "",
+    ) -> AnalysisResult:
+        """Re-run analysis with optional analyst focus and prior context."""
+        ctx = dict(function)
+        if focus_note:
+            ctx["focus_note"] = focus_note
+        if prior_result:
+            ctx["prior_category"] = prior_result.category
+            ctx["prior_summary"] = prior_result.summary
+        return self.analyze_function(
+            ctx,
+            on_progress=on_progress,
+            batch_context=batch_context,
+            run_id=run_id,
+            prompt_template="summarize_focus.txt",
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -278,12 +318,33 @@ class Analyzer:
                 f"Raw response (first 500 chars):\n{raw[:500]}"
             ) from exc
 
-    @staticmethod
+    def _stamp_provenance(
+        self,
+        result: AnalysisResult,
+        *,
+        run_id: str,
+        prompt_template: str,
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from src.versions import POSTPROCESS_VERSION, prompt_version_for
+
+        result.analyzed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result.model = self.model
+        result.backend = self.backend
+        result.prompt_version = prompt_version_for(prompt_template)
+        result.postprocess_version = POSTPROCESS_VERSION
+        result.run_id = run_id
+
     def _build_result(
+        self,
         function: dict[str, Any],
         parsed: dict,
         raw: str,
         batch_context: "BatchContext | None" = None,
+        *,
+        run_id: str = "",
+        prompt_template: str = "summarize.txt",
     ) -> AnalysisResult:
         from src.postprocess import refine
 
@@ -306,4 +367,6 @@ class Analyzer:
             uncertainties=parsed.get("uncertainties", []),
             raw_response=raw,
         )
-        return refine(result, function, batch_context)
+        result = refine(result, function, batch_context)
+        self._stamp_provenance(result, run_id=run_id, prompt_template=prompt_template)
+        return result

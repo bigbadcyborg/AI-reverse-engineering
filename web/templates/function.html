@@ -3,7 +3,7 @@
 
 {% block content %}
 <div style="margin-bottom:1rem;">
-  <a href="/" class="secondary">&larr; Back to list</a>
+  <a href="/{% if selected_run_id %}?run={{ selected_run_id }}{% endif %}" class="secondary">&larr; Back to list</a>
 </div>
 
 <!-- Function header -->
@@ -13,6 +13,9 @@
     <code class="addr-large">{{ fn.entry_point }}</code>
     {% if fn.source_file %}
       <span class="muted" style="margin-left:0.75rem; font-size:0.85rem;">from {{ fn.source_file }}</span>
+    {% endif %}
+    {% if fn.run_id %}
+      <span class="muted" style="margin-left:0.75rem; font-size:0.85rem;">run {{ fn.run_id[:8] }}…</span>
     {% endif %}
   </div>
   <div class="fn-badges">
@@ -44,33 +47,23 @@
   <!-- Right: analysis + rename -->
   <aside class="analysis-section">
 
-    <!-- LLM Summary -->
-    <div class="analysis-card">
-      <h4>Summary</h4>
-      <p>{{ fn.summary or "No summary available." }}</p>
+    <div id="analysis-panel-wrap">
+      {% include "partials/analysis_summary.html" %}
     </div>
 
-    {% if fn.side_effects %}
     <div class="analysis-card">
-      <h4>Side Effects</h4>
-      <ul class="detail-list">
-        {% for effect in fn.side_effects %}
-        <li>{{ effect }}</li>
-        {% endfor %}
-      </ul>
+      <h4>Re-analyze</h4>
+      <form
+        hx-post="/api/reanalyze"
+        hx-target="#analysis-panel-wrap"
+        hx-swap="innerHTML">
+        <input type="hidden" name="entry_point" value="{{ fn.entry_point }}">
+        <label for="focus-note">Analyst focus (optional)</label>
+        <textarea id="focus-note" name="focus" rows="3"
+          placeholder="e.g. Classify as network; calls send() and xor_crypt"></textarea>
+        <button type="submit" class="outline">Re-analyze with LLM</button>
+      </form>
     </div>
-    {% endif %}
-
-    {% if fn.uncertainties %}
-    <div class="analysis-card warning-card">
-      <h4>Uncertainties</h4>
-      <ul class="detail-list">
-        {% for u in fn.uncertainties %}
-        <li>{{ u }}</li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
 
     <!-- Rename suggestion + approval -->
     <div class="analysis-card rename-card">

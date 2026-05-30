@@ -392,6 +392,36 @@ Results are shaped by three layers: **model choice**, **prompts** (`prompts/summ
 
 See [change-report-5-29-26.md](change-report-5-29-26.md) for the full rationale.
 
+### Analysis runs and provenance
+
+Each batch analysis gets a **run ID** stored in SQLite (`analysis_runs` table) and embedded in JSONL output (`run_id`, `model`, `prompt_version`, `postprocess_version`, `analyzed_at`). The dashboard header includes an **Analysis run** selector — switch runs to compare models without overwriting prior results.
+
+```powershell
+python -m src.cli analyze --input data/input/re_test_target.jsonl `
+  --output data/output/results.jsonl --ingest
+
+python -m src.cli search --stats --run-id <run_id>
+```
+
+### Priority sorting
+
+When `analysis.sort_by` is `"priority"` (default in `config.example.json`), functions are ranked by xref count, human-readable names, security callees, and code size before `--limit` is applied — so `--limit 50` means the **top 50 by priority**, not the first 50 in the export file.
+
+```powershell
+python -m src.cli analyze --input data/input/re_test_target.jsonl `
+  --output data/output/results.jsonl --limit 50 --skip-runtime
+```
+
+### Re-analyze with analyst focus
+
+```powershell
+python -m src.cli reanalyze --entry-point 0x1400016b6 `
+  --source data/input/re_test_target.jsonl `
+  --focus "Classify as network; it calls send() and xor_crypt"
+```
+
+On the function detail page, use **Re-analyze with LLM** (optional focus note) to refresh a single row in the current run.
+
 ### Load analysis results into the search database
 
 ```bash
@@ -516,7 +546,13 @@ Each analyzed function produces a JSON object (JSONL line):
   "confidence": "medium",
   "side_effects": ["reads filesystem metadata"],
   "uncertainties": [],
-  "raw_response": "{...}"
+  "raw_response": "{...}",
+  "analyzed_at": "2026-05-30T02:13:00Z",
+  "model": "codellama:13b-instruct",
+  "backend": "ollama",
+  "prompt_version": "a1b2c3d4e5f6",
+  "postprocess_version": "1.1.0",
+  "run_id": "f47ac10b58cc4372a5670e02b2c3d479"
 }
 ```
 
@@ -540,7 +576,7 @@ Dedicated rename suggestions (`suggest-renames`) are written separately as JSONL
 | 8 | Local web dashboard with code viewer and rename approval | Done |
 | 9 | Local embeddings and semantic search | Future |
 | 10 | Function clustering, call graph analysis | Future |
-| 11 | Multi-model comparison | Future |
+| 11 | Multi-model comparison (run history, provenance) | Partial |
 
 ---
 

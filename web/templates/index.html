@@ -11,17 +11,23 @@
   <!-- ── Sidebar ─────────────────────────────────────────────── -->
   <aside class="sidebar">
     <h3 class="sidebar-title">Database</h3>
+    {% if selected_run and selected_run.model %}
+    <p class="muted" style="margin-bottom:0.25rem;font-size:0.85rem;">
+      Model: <strong>{{ selected_run.model }}</strong>
+    </p>
+    {% endif %}
     <p class="muted" style="margin-bottom:0.5rem;">
       <strong>{{ stats.total }}</strong> functions
     </p>
 
     <nav class="sidebar-nav">
       <strong class="sidebar-section">Category</strong>
-      <a href="/" class="sidebar-link {% if not category %}active{% endif %}">
+      <a href="/?{% if selected_run_id %}run={{ selected_run_id }}{% endif %}"
+         class="sidebar-link {% if not category %}active{% endif %}">
         All <span class="count">{{ stats.total }}</span>
       </a>
       {% for cat, cnt in stats.by_category.items() %}
-      <a href="/?category={{ cat }}"
+      <a href="/?category={{ cat }}{% if selected_run_id %}&run={{ selected_run_id }}{% endif %}"
          class="sidebar-link {% if category == cat %}active{% endif %}">
         <span class="cat-dot cat-{{ cat }}"></span>
         {{ cat }} <span class="count">{{ cnt }}</span>
@@ -29,17 +35,17 @@
       {% endfor %}
 
       <strong class="sidebar-section" style="margin-top:1rem;">Confidence</strong>
-      <a href="/?confidence=high"
+      <a href="/?confidence=high{% if selected_run_id %}&run={{ selected_run_id }}{% endif %}"
          class="sidebar-link {% if confidence == 'high' %}active{% endif %}">
         <span class="conf-dot conf-high"></span>High
         <span class="count">{{ stats.by_confidence.get('high', 0) }}</span>
       </a>
-      <a href="/?confidence=medium"
+      <a href="/?confidence=medium{% if selected_run_id %}&run={{ selected_run_id }}{% endif %}"
          class="sidebar-link {% if confidence == 'medium' %}active{% endif %}">
         <span class="conf-dot conf-medium"></span>Medium
         <span class="count">{{ stats.by_confidence.get('medium', 0) }}</span>
       </a>
-      <a href="/?confidence=low"
+      <a href="/?confidence=low{% if selected_run_id %}&run={{ selected_run_id }}{% endif %}"
          class="sidebar-link {% if confidence == 'low' %}active{% endif %}">
         <span class="conf-dot conf-low"></span>Low
         <span class="count">{{ stats.by_confidence.get('low', 0) }}</span>
@@ -63,7 +69,7 @@
         hx-get="/api/search"
         hx-trigger="input changed delay:350ms, search"
         hx-target="#function-list"
-        hx-include="#cat-select, #conf-select"
+        hx-include="#cat-select, #conf-select, #run-input"
         hx-indicator="#search-spinner"
         style="margin-bottom:0;">
 
@@ -71,7 +77,7 @@
         hx-get="/api/search"
         hx-trigger="change"
         hx-target="#function-list"
-        hx-include="#search-input, #conf-select">
+        hx-include="#search-input, #conf-select, #run-input">
         <option value="">All categories</option>
         {% for cat in stats.by_category.keys() %}
         <option value="{{ cat }}" {% if category == cat %}selected{% endif %}>{{ cat }}</option>
@@ -82,12 +88,16 @@
         hx-get="/api/search"
         hx-trigger="change"
         hx-target="#function-list"
-        hx-include="#search-input, #cat-select">
+        hx-include="#search-input, #cat-select, #run-input">
         <option value="">All confidence</option>
         <option value="high"   {% if confidence == 'high'   %}selected{% endif %}>High</option>
         <option value="medium" {% if confidence == 'medium' %}selected{% endif %}>Medium</option>
         <option value="low"    {% if confidence == 'low'    %}selected{% endif %}>Low</option>
       </select>
+
+      {% if selected_run_id %}
+      <input type="hidden" id="run-input" name="run" value="{{ selected_run_id }}">
+      {% endif %}
 
       <span id="search-spinner" class="htmx-indicator muted" style="align-self:center;">searching...</span>
       <button type="button" id="import-btn" class="outline secondary">Import JSONL</button>

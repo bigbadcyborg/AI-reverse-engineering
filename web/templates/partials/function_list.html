@@ -18,12 +18,13 @@
       <td class="fn-name">{{ fn.function_name }}</td>
 
       <td class="fn-suggestion">
+        {% set run_qs = ('?run=' + selected_run_id) if selected_run_id else '' %}
         {% if fn.suggested_name and fn.suggested_name != fn.function_name %}
-          <a href="/function/{{ fn.entry_point }}">
+          <a href="/function/{{ fn.entry_point }}{{ run_qs }}">
             <strong>{{ fn.suggested_name }}</strong>
           </a>
         {% else %}
-          <a href="/function/{{ fn.entry_point }}" class="muted">view</a>
+          <a href="/function/{{ fn.entry_point }}{{ run_qs }}" class="muted">view</a>
         {% endif %}
       </td>
 
